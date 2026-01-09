@@ -44,7 +44,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train YOLOv10-X Teacher')
     parser.add_argument('--data', type=str, default='unina_dla/config/unina_dla_data.yaml', help='Path to dataset yaml')
     parser.add_argument('--epochs', type=int, default=300, help='Number of epochs')
-    parser.add_argument('--batch', type=int, default=16, help='Batch size')
+    parser.add_argument('--batch', type=int, default=32, help='Batch size')
     
     args = parser.parse_args()
     
