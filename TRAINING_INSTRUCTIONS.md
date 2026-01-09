@@ -86,7 +86,7 @@ python scripts/check_model_properties.py --onnx unina_dla_qat.onnx
 ### 2. Validation
 Evaluate the performance on your validation set:
 ```bash
-python scripts/val.py --weights checkpoints/best.pth --data unina_dla/config/unina_dla_data.yaml
+python scripts/val.py --checkpoint checkpoints/best.pth --data unina_dla/config/unina_dla_data.yaml
 ```
 
 ---

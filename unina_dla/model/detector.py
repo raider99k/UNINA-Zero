@@ -4,7 +4,7 @@ from unina_dla.model.backbone.repvgg import RepVGG_B0
 from unina_dla.model.neck.rep_pan import RepPAN
 from unina_dla.model.head.yolov10_head import YOLOv10Head
 
-class UNINA_DLA_v1(nn.Module):
+class UNINA_DLA(nn.Module):
     """
     Complete UNINA-DLA Detector.
     
