@@ -37,12 +37,10 @@ class RepPAN(nn.Module):
         self.p4_fusion = RepVGGBlock(out_channels * 2, out_channels, deploy=deploy)
         
         # Upsample P4_fused + Concat with P3 -> Fuse
-        # Note: P3 is c3 (256), already matches out_channels usually. 
-        # But if c3 != out_channels, we might need a reduction?
-        # Assuming c3 == out_channels for now (256), or we treat it as generic.
-        # Let's add a reduction for P3 just in case, or handle mismatch in fusion.
-        # Usually YOLO FPN reduces lateral connections first.
-        self.reduce_p3 = RepVGGBlock(c3, out_channels, deploy=deploy)
+        if c3 != out_channels:
+            self.reduce_p3 = RepVGGBlock(c3, out_channels, deploy=deploy)
+        else:
+            self.reduce_p3 = nn.Identity()
         
         self.p3_fusion = RepVGGBlock(out_channels * 2, out_channels, deploy=deploy)
         
