@@ -1,100 +1,149 @@
-# UNINA-DLA: Model Training & Deployment Instructions
+# UNINA-DLA: Training & Deployment Guide
 
-This guide provides step-by-step instructions for training the UNINA-DLA detector, from initial teacher training to DLA-optimized ONNX export.
+A complete guide to training the UNINA-DLA cone detector for Formula Student Driverless.
 
 ## Prerequisites
 
-- **Environment**: Ensure you have installed the requirements from `requirements.txt`.
-- **Hardware**: Training is recommended on a machine with a CUDA-enabled GPU (≥ RTX 2070). Deployment targets the **NVIDIA Jetson Orin AGX DLA**.
-- **Dataset**: Your dataset should be organized in YOLO format and described in `unina_dla/config/unina_dla_data.yaml`.
+| Requirement | Details |
+|:---|:---|
+| **OS** | Linux (Ubuntu 22.04) recommended. WSL2 works on Windows. |
+| **GPU** | CUDA-enabled (≥ RTX 2070, 8GB VRAM) |
+| **Python** | 3.10+ |
+| **Dependencies** | `pip install -r requirements.txt` |
+| **Dataset** | YOLO format, configured in `unina_dla/config/unina_dla_data.yaml` |
 
 ---
 
-## Phase 0: Teacher Training
+## Training Workflow
 
-We use a high-capacity teacher (**YOLOv10-X**) to guide the training of our lightweight, DLA-compatible student model.
+The training consists of **two main steps**:
 
-```bash
-python scripts/train_teacher.py --data unina_dla/config/unina_dla_data.yaml --epochs 300 --batch 16
+```
+┌──────────────────┐      ┌─────────────────────────────────────────┐
+│ 1. Train Teacher │ ───▶ │ 2. Train Student (Distill → QAT → ONNX) │
+└──────────────────┘      └─────────────────────────────────────────┘
 ```
 
-- **Output**: The best weights will be saved in `runs/unina_dla_teacher/yolov10x_fsg/weights/best.pt`.
-- **Note**: This teacher uses advanced augmentations (Mosaic, Mixup) and SiLU activations, which are not DLA-compatible but provide a strong performance baseline.
+---
+
+## Step 1: Train the Teacher
+
+Train a high-capacity **YOLOv10-X** model. This is a one-time cost per dataset.
+
+```bash
+python scripts/train_teacher.py \
+    --data unina_dla/config/unina_dla_data.yaml \
+    --epochs 300 \
+    --batch 16
+```
+
+**Output**: `runs/unina_dla_teacher/yolov10x_fsg/weights/best.pt`
+
+> [!TIP]
+> The teacher uses SiLU activations and advanced augmentations (Mosaic/Mixup) to maximize accuracy. These are intentionally not DLA-compatible.
 
 ---
 
-## Phase 1: Tri-Vector Student Distillation
+## Step 2: Train the Student (Unified Pipeline)
 
-In this phase, we train the **UNINA-DLA** model (student). It uses structural re-parameterization (RepVGG), ReLU activations, and a DLA-optimized neck/head. We use knowledge distillation (SDF, Logit, and DFL losses) to transfer knowledge from the teacher.
+A single command automates the complete student pipeline:
+
+| Phase | Description |
+|:---|:---|
+| **1. Distillation** | Tri-Vector knowledge transfer (SDF, Logit, DFL) |
+| **2. QAT** | Quantization-Aware Training for INT8 precision |
+| **3. Export** | DLA-optimized ONNX with static shapes |
 
 ```bash
-python scripts/train_distillation.py \
+python scripts/train_student.py \
     --teacher runs/unina_dla_teacher/yolov10x_fsg/weights/best.pt \
     --data unina_dla/config/unina_dla_data.yaml \
-    --epochs 100 \
+    --epochs_distill 100 \
+    --epochs_qat 10 \
     --batch 16 \
-    --exp_name unina_dla
+    --onnx_output unina_dla.onnx
 ```
 
-- **Objective**: Match the feature maps and prediction distributions of the teacher while maintaining a DLA-native architecture.
-- **Checkpoints**: Saved in `checkpoints/best.pth`.
+### Outputs
+| File | Description |
+|:---|:---|
+| `checkpoints/best_distill.pth` | Best distilled student (FP32) |
+| `checkpoints/qat_final.pth` | QAT-trained student (INT8-ready) |
+| `unina_dla.onnx` | Final deployment artifact |
 
 ---
 
-## Phase 2: Quantization-Aware Training (QAT)
+## Advanced Options
 
-To run efficiently in INT8 precision on the DLA without losing accuracy, we perform QAT. This simulates quantization noise during fine-tuning.
-
+### Skip Phases
 ```bash
-python scripts/train_qat.py \
-    --checkpoint checkpoints/best.pth \
-    --data unina_dla/config/unina_dla_data.yaml \
-    --epochs 10
+# Skip distillation (use existing checkpoint)
+python scripts/train_student.py \
+    --skip_distillation \
+    --resume checkpoints/best_distill.pth \
+    --epochs_qat 10
+
+# Skip QAT (export distilled model as FP32)
+python scripts/train_student.py \
+    --teacher <path> \
+    --skip_qat
 ```
 
-- **Process**:
-    1. **Fuse**: Merges RepVGG branches into a single path.
-    2. **Calibrate**: Uses a subset of data to determine optimal quantization scales (Entropy Calibration).
-    3. **Fine-tune**: Adapts weights to quantization errors using the original FP32 student as a reference (Self-Distillation).
+### All Arguments
+| Argument | Default | Description |
+|:---|:---|:---|
+| `--teacher` | *Required* | Path to teacher weights |
+| `--data` | `unina_dla/config/unina_dla_data.yaml` | Dataset config |
+| `--epochs_distill` | `100` | Distillation epochs |
+| `--epochs_qat` | `10` | QAT fine-tuning epochs |
+| `--batch` | `16` | Batch size |
+| `--skip_distillation` | `False` | Skip Phase 1 |
+| `--skip_qat` | `False` | Skip Phase 2 |
+| `--resume` | `None` | Checkpoint to resume from |
+| `--output_dir` | `checkpoints` | Directory for checkpoints |
+| `--onnx_output` | `unina_dla.onnx` | ONNX output path |
 
 ---
 
-## Phase 3: DLA-Optimized ONNX Export
-
-The final step is to export the model to ONNX. We apply strict **Static Shape** constraints and use a **DLA Wrapper** to ensure the output format is optimized for zero-copy DLA inference.
-
-### Option A: Export FP32 (No QAT)
-```bash
-python scripts/export_onnx.py --checkpoint checkpoints/best.pth --output unina_dla_fp32.onnx
-```
-
-### Option B: Export QAT (INT8 Optimized)
-```bash
-python scripts/export_onnx.py --checkpoint checkpoints/unina_dla_qat_epoch_10.pth --output unina_dla_qat.onnx --qat
-```
-
----
-
-## Phase 4: Verification
+## Verification
 
 ### 1. DLA Compatibility Check
-Check if there are any unsupported layers that might cause GPU fallback:
 ```bash
-python scripts/check_model_properties.py --onnx unina_dla_qat.onnx
+python scripts/check_model_properties.py --onnx unina_dla.onnx
 ```
 
-### 2. Validation
-Evaluate the performance on your validation set:
+### 2. Validation (mAP Evaluation)
 ```bash
-python scripts/val.py --checkpoint checkpoints/best.pth --data unina_dla/config/unina_dla_data.yaml
+python scripts/val.py \
+    --checkpoint checkpoints/best_distill.pth \
+    --data unina_dla/config/unina_dla_data.yaml
 ```
 
 ---
 
-## Summary of Operations
-| Operation | Goal | Target Hardware |
-| :--- | :--- | :--- |
-| **Teacher Training** | Establish performance ceiling | GPU (Cloud/Desktop) |
-| **Distillation** | Compress knowledge into student | GPU (Cloud/Desktop) |
-| **QAT** | Prepare for INT8 precision | GPU (Cloud/Desktop) |
-| **Export** | Generate deployment artifact | Jetson Orin (DLA) |
+## Deployment to Jetson Orin
+
+After training, convert the ONNX to a TensorRT engine on the Jetson:
+
+```bash
+/usr/src/tensorrt/bin/trtexec \
+    --onnx=unina_dla.onnx \
+    --saveEngine=unina_dla.engine \
+    --useDLACore=0 \
+    --int8 \
+    --allowGPUFallback
+```
+
+> [!IMPORTANT]
+> Use `--allowGPUFallback` only for debugging. For production, verify 100% DLA residency with `nsys profile`.
+
+---
+
+## Quick Reference
+
+| Task | Command |
+|:---|:---|
+| Train Teacher | `python scripts/train_teacher.py --data <yaml> --epochs 300` |
+| Train Student | `python scripts/train_student.py --teacher <pt> --data <yaml>` |
+| Validate | `python scripts/val.py --checkpoint <pth> --data <yaml>` |
+| Export Only | `python scripts/export_onnx.py --checkpoint <pth> --output <onnx>` |

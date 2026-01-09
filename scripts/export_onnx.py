@@ -10,39 +10,45 @@ except ImportError:
 import argparse
 import os
 
-def export_onnx(checkpoint, output, qat=False):
-    print(f"Exporting model to {output} (QAT={qat})...")
+def export_onnx(checkpoint, output, qat=False, num_classes=4):
+    print(f"Exporting model to {output} (QAT={qat}, num_classes={num_classes})...")
     
     # 1. Load Model
-    model = UNINA_DLA(num_classes=4, deploy=False)
-    # If checkpoint is provided and exists, load it
-    if checkpoint and os.path.exists(checkpoint):
-        print(f"Loading weights from {checkpoint}")
-        model.load_state_dict(torch.load(checkpoint, map_location='cpu'))
-    else:
-        print("No checkpoint found or provided. Exporting random weights.")
+    model = UNINA_DLA(num_classes=num_classes, deploy=False)
     
     # 2. Prepare for Deploy
     if qat:
         if quant_nn is None:
             raise ImportError("Cannot export QAT model: pytorch_quantization not installed.")
-        # If exporting a QAT model, we need to ensure the graph allows export
-        # pytorch-quantization exports to ONNX with 'fake quantization' nodes
-        # TensorRT then fuses these.
+        # CRITICAL: For QAT export, we must:
+        # 1. Prepare the model for QAT (inserts QuantConv layers)
+        # 2. THEN load the QAT-trained weights (which have QuantConv keys)
         quant_nn.TensorQuantizer.use_fb_fake_quant = True
         model = prepare_qat_model(model)
-        # model.load_state_dict(torch.load(checkpoint)) # Re-load QAT weights
+        
+        # Now load QAT weights
+        if checkpoint and os.path.exists(checkpoint):
+            print(f"Loading QAT weights from {checkpoint}")
+            model.load_state_dict(torch.load(checkpoint, map_location='cpu'))
+        else:
+            raise FileNotFoundError(f"QAT checkpoint required but not found: {checkpoint}")
     else:
-        # FP32 Export: Just fuse RepVGG
+        # FP32 Export: Load weights first, then fuse RepVGG
+        if checkpoint and os.path.exists(checkpoint):
+            print(f"Loading weights from {checkpoint}")
+            model.load_state_dict(torch.load(checkpoint, map_location='cpu'))
+        else:
+            print("No checkpoint found or provided. Exporting random weights.")
         model.switch_to_deploy()
     
     # Enable Export Mode for Flattened Output
     # User modified head to return tuple. We use a Wrapper to enforce DLA-friendly flattened output.
     
     class DLAWrapper(torch.nn.Module):
-        def __init__(self, model):
+        def __init__(self, model, num_classes):
             super().__init__()
             self.model = model
+            self.num_classes = num_classes
             
         def forward(self, x):
             # Get split outputs from model head
@@ -51,22 +57,22 @@ def export_onnx(checkpoint, output, qat=False):
             # Flatten and Concat for DLA Zero-Copy
             preds = []
             for reg, cls in zip(reg_outs, cls_outs):
-                # reg: [B, 64, H, W], cls: [B, 4, H, W]
+                # reg: [B, 64, H, W], cls: [B, NC, H, W]
                 # Permute to [B, H, W, C]
                 reg = reg.permute(0, 2, 3, 1)
                 cls = cls.permute(0, 2, 3, 1)
                 
                 b, h, w, _ = reg.shape
                 reg = reg.reshape(b, -1, 64)
-                cls = cls.reshape(b, -1, 4).sigmoid() # Apply sigmoid to probabilities
+                cls = cls.reshape(b, -1, self.num_classes).sigmoid() # Apply sigmoid
                 
                 # Re-concat: [Box, Cls]
                 preds.append(torch.cat([reg, cls], dim=-1))
                 
-            # [B, 8400, 68]
+            # [B, 8400, 64+NC]
             return torch.cat(preds, dim=1)
             
-    model = DLAWrapper(model)
+    model = DLAWrapper(model, num_classes)
         
     model.eval()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -76,7 +82,7 @@ def export_onnx(checkpoint, output, qat=False):
     dummy_input = torch.randn(1, 3, 640, 640).to(device)
     
     # 4. Export
-    # The forward pass now returns a single tensor [B, 8400, NC+4]
+    # The forward pass now returns a single tensor [B, 8400, 64+NC]
     torch.onnx.export(
         model,
         dummy_input,
@@ -94,7 +100,8 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=str, default='unina-dla.pth')
     parser.add_argument('--output', type=str, default='unina-dla.onnx')
     parser.add_argument('--qat', action='store_true', help="Export QAT model")
+    parser.add_argument('--num_classes', type=int, default=4, help="Number of classes")
     
     args = parser.parse_args()
     
-    export_onnx(args.checkpoint, args.output, args.qat)
+    export_onnx(args.checkpoint, args.output, args.qat, args.num_classes)
