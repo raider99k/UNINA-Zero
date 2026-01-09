@@ -1,4 +1,4 @@
---extra-index-url https://pypi.ngc.nvidia.com
+--extra-index-url https://pypi.nvidia.com
 torch>=2.0.0
 torchvision>=0.15.0
 onnx>=1.14.0
