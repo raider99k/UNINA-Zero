@@ -34,12 +34,13 @@ Train a high-capacity **YOLOv10-X** model. This is a one-time cost per dataset.
 python scripts/train_teacher.py \
     --data unina_dla/config/unina_dla_data.yaml \
     --epochs 300 \
-    --batch 16
+    --batch 32
 ```
 
 **Output**: `runs/unina_dla_teacher/yolov10x_fsg/weights/best.pt`
 
 > [!TIP]
+> **RTX 4090 User**: You can comfortably increase the batch size to **32** or **48** for teacher training. The 24GB VRAM also allows for high-resolution validation concurrently.
 > The teacher uses SiLU activations and advanced augmentations (Mosaic/Mixup) to maximize accuracy. These are intentionally not DLA-compatible.
 
 ---
@@ -60,16 +61,28 @@ python scripts/train_student.py \
     --data unina_dla/config/unina_dla_data.yaml \
     --epochs_distill 100 \
     --epochs_qat 10 \
-    --batch 16 \
+    --batch 32 \
     --onnx_output unina_dla.onnx
 ```
 
 ### Outputs
+The training script generates both model checkpoints and visual validation artifacts in the `--output_dir` (default: `checkpoints/`).
+
+#### 1. Models
 | File | Description |
 |:---|:---|
 | `checkpoints/best_distill.pth` | Best distilled student (FP32) |
 | `checkpoints/qat_final.pth` | QAT-trained student (INT8-ready) |
 | `unina_dla.onnx` | Final deployment artifact |
+
+#### 2. Visualizations
+Automatic "YOLO-style" images are generated for inspection:
+| File | Description |
+|:---|:---|
+| `train_batch0.jpg` | First training batch with Ground Truth labels |
+| `results_distill.png` | Loss and mAP curves for Phase 1 |
+| `results_qat.png` | Loss and mAP curves for Phase 2 |
+| `confusion_matrix_*.png` | Matrix showing class-wise precision and recall |
 
 ---
 
