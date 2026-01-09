@@ -2,7 +2,7 @@ import os
 from ultralytics import YOLO
 import argparse
 
-def train_teacher(data_yaml, epochs=300, batch_size=16, project='unina_dla_teacher', name='yolov10x_fsg'):
+def train_teacher(data_yaml, epochs=300, batch_size=32, project='unina_dla_teacher', name='yolov10x_fsg'):
     """
     Train the YOLOv10-X teacher model on the FSG dataset.
     """
