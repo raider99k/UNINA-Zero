@@ -9,7 +9,7 @@ A complete guide to training the UNINA-DLA cone detector for Formula Student Dri
 | **OS** | Linux (Ubuntu 22.04) recommended. WSL2 works on Windows. |
 | **GPU** | CUDA-enabled (≥ RTX 2070, 8GB VRAM) |
 | **Python** | 3.10+ |
-| **Dependencies** | `pip install -r requirements.txt` |
+| **Dependencies** | `pip install -r requirements.txt` (requires NVIDIA index) |
 | **Dataset** | YOLO format, configured in `unina_dla/config/unina_dla_data.yaml` |
 
 ---
