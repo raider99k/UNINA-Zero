@@ -6,10 +6,72 @@ from unina_dla.utils.qat_utils import prepare_qat_model, enable_calibration, ena
 from ultralytics.data import build_yolo_dataset, build_dataloader
 from ultralytics.data.utils import check_det_dataset
 from ultralytics.utils import DEFAULT_CFG, IterableSimpleNamespace
+from ultralytics.utils.loss import v8DetectionLoss
 import argparse
 import yaml
 import os
 from tqdm import tqdm
+
+class YOLOv8LossAdapter:
+    """
+    Adapter to use ultralytics v8DetectionLoss with UNINA_DLA model.
+    """
+    def __init__(self, real_model, cfg):
+        self.device = next(real_model.parameters()).device
+
+        # Create a MockModel to satisfy v8DetectionLoss requirements
+        class MockHead:
+            def __init__(self, nc, reg_max, stride):
+                self.nc = nc
+                self.reg_max = reg_max
+                # Ensure stride is a tensor on the correct device
+                self.stride = torch.tensor(stride).to(real_model.parameters().__next__().device) if isinstance(stride, list) else stride
+                self.no = nc + reg_max * 4
+
+        class MockModel:
+            def __init__(self, args, head_attrs):
+                self.args = args
+                self.model = [MockHead(**head_attrs)]
+
+            def parameters(self):
+                return real_model.parameters()
+
+        # Extract head attributes from UNINA_DLA
+        # UNINA_DLA has self.head which is YOLOv10Head
+        # YOLOv10Head has num_classes and reg_max
+        # Stride is fixed [8, 16, 32] for this architecture
+        head = real_model.head
+        head_attrs = {
+            'nc': head.num_classes,
+            'reg_max': head.reg_max,
+            'stride': [8., 16., 32.]
+        }
+
+        # We need to make sure cfg contains box, cls, dfl gains
+        # DEFAULT_CFG should have them.
+        self.mock_model = MockModel(cfg, head_attrs)
+        self.loss_fn = v8DetectionLoss(self.mock_model)
+
+    def __call__(self, preds, batch):
+        """
+        Args:
+            preds: (reg_outputs, cls_outputs) from UNINA_DLA
+            batch: dict containing 'batch_idx', 'cls', 'bboxes', etc.
+        """
+        reg_outs, cls_outs = preds
+
+        # Concatenate reg and cls outputs for each scale to match v8DetectionLoss expectation
+        # v8DetectionLoss expects a list of tensors [B, NO, H, W] where NO = 4*reg_max + nc
+        # And specifically, it expects concatenated (reg, cls) order because it splits them:
+        # pred_distri, pred_scores = ...split((self.reg_max * 4, self.nc), 1)
+
+        feats = []
+        for r, c in zip(reg_outs, cls_outs):
+            # r: [B, 4*reg_max, H, W]
+            # c: [B, nc, H, W]
+            feats.append(torch.cat([r, c], dim=1))
+
+        return self.loss_fn(feats, batch)
 
 def train_qat(checkpoint_path, data_yaml, epochs=30, batch_size=16):
     print("Starting QAT Pipeline...")
@@ -18,9 +80,11 @@ def train_qat(checkpoint_path, data_yaml, epochs=30, batch_size=16):
     # 1. Load Data
     data_cfg = check_det_dataset(data_yaml)
     
-    # Create a config namespace for the dataset
+    # Create a config namespace for the dataset and loss
     dataset_cfg = IterableSimpleNamespace(**DEFAULT_CFG.__dict__)
     dataset_cfg.imgsz = 640
+    # Ensure dataset_cfg has loss hyperparameters
+    # box: 7.5, cls: 0.5, dfl: 1.5 are defaults in DEFAULT_CFG
     
     print(f"Building Dataset from {data_cfg['train']}...")
     dataset = build_yolo_dataset(dataset_cfg, data_cfg['train'], batch_size, data_cfg, mode='train', rect=False)
@@ -61,36 +125,11 @@ def train_qat(checkpoint_path, data_yaml, epochs=30, batch_size=16):
     model.train()
     
     # 5. Fine-tuning
-    # Since we lack the complex YOLO Task Loss in this standalone script,
-    # we will use Self-Distillation (Feature Matching) from the static FP32 model (Teacher)
-    # just to ensure weights adapt to quantization noise without drifting.
-    # Ideally, use the original Teacher or Task Loss.
-    
-    # For robust "No Dummy Code", we just minimize MSE on output features vs FP32 model
-    # Or just run the loop (assuming user might plug in loss). 
-    # Let's implement Output MSE Loss (simplest QAT recovery).
-    
-    # We need a reference "Teacher" (the original FP32 model)
-    # But we modified 'model' in-place. We should have kept a copy if we wanted self-distill.
-    # We will assume simple fine-tuning is desired. 
-    # Lacking task loss is critical.
-    # I will perform "Dummy Fine-Tuning" - i.e. just running the loop with a dummy loss 
-    # to demonstrate mechanics, but warn user.
-    # User said "No Dummy Code".
-    # I must implement a loss.
-    # Feature Matching with itself (Distillation from pre-quantized state) is a valid QAT strategy.
-    
-    # Reload FP32 reference
-    ref_model = UNINA_DLA(num_classes=data_cfg.get('nc', 4), deploy=True) # Fused
-    if os.path.exists(checkpoint_path):
-        ref_model.load_state_dict(torch.load(checkpoint_path))
-        # We need to fuse it to match the QAT model structure
-        ref_model.switch_to_deploy()
-    ref_model.to(device)
-    ref_model.eval()
+    # Use full YOLO Task Loss (IoU, DFL, Cls)
+    # Initialize Loss Adapter
+    loss_adapter = YOLOv8LossAdapter(model, dataset_cfg)
     
     optimizer = optim.AdamW(model.parameters(), lr=1e-5) # Low learning rate
-    mse_loss = nn.MSELoss()
     
     for epoch in range(epochs):
         model.train()
@@ -102,23 +141,24 @@ def train_qat(checkpoint_path, data_yaml, epochs=30, batch_size=16):
             optimizer.zero_grad()
             
             # Forward QAT Model
-            # UNINA_DLA now returns (reg_outs, cls_outs)
-            q_reg, q_cls = model(imgs) 
+            # UNINA_DLA returns (reg_outs, cls_outs)
+            preds = model(imgs)
             
-            # Forward Reference FP32 Model
-            with torch.no_grad():
-                f_reg, f_cls = ref_model(imgs)
-                
-            # Compute Loss: MSE between FP32 outputs and QAT outputs
-            loss = 0.0
-            for i in range(len(q_reg)):
-                loss += mse_loss(q_reg[i], f_reg[i])
-                loss += mse_loss(q_cls[i], f_cls[i])
-                
-            loss.backward()
+            # Compute Loss using YOLO Task Loss
+            loss, loss_items = loss_adapter(preds, batch)
+
+            loss.sum().backward()
             optimizer.step()
             
-            pbar.set_postfix({'qat_loss': loss.item()})
+            # loss_items is a tensor of 3 values: box, cls, dfl
+            box_loss, cls_loss, dfl_loss = loss_items[0].item(), loss_items[1].item(), loss_items[2].item()
+
+            pbar.set_postfix({
+                'loss': loss.sum().item(),
+                'box': box_loss,
+                'cls': cls_loss,
+                'dfl': dfl_loss
+            })
             
         # Save QAT Model
         if (epoch+1) % 5 == 0:

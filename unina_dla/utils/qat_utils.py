@@ -61,10 +61,6 @@ def replace_modules_with_quant(module, parent_name=''):
             # Replace
             setattr(module, name, new_module)
             
-        elif isinstance(child, nn.ReLU):
-            new_module = quant_nn.QuantReLU(inplace=child.inplace)
-            setattr(module, name, new_module)
-            
         else:
             replace_modules_with_quant(child, full_name)
 
