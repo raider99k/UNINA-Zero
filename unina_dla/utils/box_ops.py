@@ -78,7 +78,19 @@ def decode_bboxes(dfl_preds, anchors, strides, xywh=False):
     boxes = dist2bbox(tlrb, anchors, xywh=xywh)
     return boxes
 
-def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, max_det=300):
+def xywh2xyxy(x):
+    """
+    Transform box coordinates from [x, y, w, h] to [x1, y1, x2, y2].
+    x: [..., 4]
+    """
+    y = x.clone() if isinstance(x, torch.Tensor) else torch.tensor(x)
+    y[..., 0] = x[..., 0] - x[..., 2] / 2  # top left x
+    y[..., 1] = x[..., 1] - x[..., 3] / 2  # top left y
+    y[..., 2] = x[..., 0] + x[..., 2] / 2  # bottom right x
+    y[..., 3] = x[..., 1] + x[..., 3] / 2  # bottom right y
+    return y
+
+def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, max_det=300, xywh=False):
     """
     Non-Maximum Suppression (NMS) on inference results to reject overlapping detections.
     prediction: [B, N, 4+C] or [B, N, 4+reg_max+C]? 
@@ -106,10 +118,8 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, max_det=300
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = x[:, :4]
         # if box is xywh, convert to xyxy
-        # Assuming input is xyxy for torchvision.ops.nms? 
-        # Usually internal generic NMS expects xyxy
-        # Let's assume input x[:, :4] is xyxy. If it's xywh:
-        # box = xywh2xyxy(box)
+        if xywh:
+            box = xywh2xyxy(box)
         
         # Detections matrix nx6 (xyxy, conf, cls)
         conf, j = x[:, 5:].max(1, keepdim=True)
