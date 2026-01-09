@@ -6,7 +6,7 @@ from unina_dla.model.head.yolov10_head import YOLOv10Head
 
 class UNINA_DLA(nn.Module):
     """
-    UNINA-DLA-v1 Model: RepVGG-B0 + Rep-PAN + YOLOv10Head.
+    UNINA-DLA Model: RepVGG-B0 + Rep-PAN + YOLOv10Head.
     """
     def __init__(self, num_classes=4, deploy=False):
         super().__init__()

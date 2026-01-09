@@ -91,8 +91,8 @@ def export_onnx(checkpoint, output, qat=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--checkpoint', type=str, default='unina_dla.pth')
-    parser.add_argument('--output', type=str, default='unina_dla.onnx')
+    parser.add_argument('--checkpoint', type=str, default='unina-dla.pth')
+    parser.add_argument('--output', type=str, default='unina-dla.onnx')
     parser.add_argument('--qat', action='store_true', help="Export QAT model")
     
     args = parser.parse_args()

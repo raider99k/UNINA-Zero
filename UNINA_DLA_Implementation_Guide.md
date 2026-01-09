@@ -1,4 +1,4 @@
-# UNINA-DLA-v1: Complete Step-by-Step Implementation Guide
+# UNINA-DLA: Complete Step-by-Step Implementation Guide
 
 **Document Status:** Production-Ready Implementation Guide  
 **Target Hardware:** NVIDIA Jetson Orin AGX  
@@ -1067,10 +1067,10 @@ if __name__ == '__main__':
 
 ### 7.1 Training Config File
 
-Create file: `configs/unina_dla_v1_train.py`
+Create file: `configs/unina_dla_train.py`
 
 ```python
-# UNINA-DLA-v1: Student Model Training Configuration
+# UNINA-DLA: Student Model Training Configuration
 # This config trains the RepVGG-B0 student on cone detection with knowledge distillation
 
 _base_ = [
@@ -1255,10 +1255,10 @@ Create file: `train_unina.py`
 
 ```python
 #!/usr/bin/env python
-"""Training script for UNINA-DLA-v1 with knowledge distillation.
+"""Training script for UNINA-DLA with knowledge distillation.
 
 Usage:
-    python train_unina.py configs/unina_dla_v1_train.py --work-dir ./work_dirs/unina_v1
+    python train_unina.py configs/unina_dla_train.py --work-dir ./work_dirs/unina_v1
 """
 
 import argparse
@@ -1268,7 +1268,7 @@ from mmengine.registry import build_from_cfg
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train UNINA-DLA-v1')
+    parser = argparse.ArgumentParser(description='Train UNINA-DLA')
     parser.add_argument('config', help='Training config file path')
     parser.add_argument('--checkpoint', default=None, help='Resume from checkpoint')
     parser.add_argument('--work-dir', default='./work_dirs', help='Output directory')
@@ -1296,7 +1296,7 @@ if __name__ == '__main__':
 Run training:
 
 ```bash
-python train_unina.py configs/unina_dla_v1_train.py --work-dir ./work_dirs/unina_dla_v1
+python train_unina.py configs/unina_dla_train.py --work-dir ./work_dirs/unina_dla
 ```
 
 ---
@@ -1315,7 +1315,7 @@ This script loads a trained FP32 model and inserts quantization nodes
 around convolutions and activations, preparing for INT8 inference on DLA.
 
 Usage:
-    python prepare_qat.py work_dirs/unina_dla_v1/epoch_100.pth
+    python prepare_qat.py work_dirs/unina_dla/epoch_100.pth
 """
 
 import torch
@@ -1382,7 +1382,7 @@ def prepare_model_for_qat(model_path, output_path):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Prepare model for QAT')
     parser.add_argument('model_path', help='Path to trained model')
-    parser.add_argument('--output', default='checkpoints/unina_dla_v1_qat_ready.pth',
+    parser.add_argument('--output', default='checkpoints/unina_dla_qat_ready.pth',
                        help='Output path for QAT-ready model')
     args = parser.parse_args()
     
@@ -1401,8 +1401,8 @@ Fine-tune the model with simulated INT8 quantization for ~10% of original
 training epochs. This allows weights to adapt to quantization.
 
 Usage:
-    python finetune_qat.py --config configs/unina_dla_v1_train.py \\
-                            --checkpoint work_dirs/unina_dla_v1_qat_ready.pth
+    python finetune_qat.py --config configs/unina_dla_train.py \\
+                            --checkpoint work_dirs/unina_dla_qat_ready.pth
 """
 
 import torch
@@ -1530,7 +1530,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='QAT fine-tuning')
     parser.add_argument('--config', required=True, help='Training config')
     parser.add_argument('--checkpoint', required=True, help='QAT-ready checkpoint')
-    parser.add_argument('--output', default='checkpoints/unina_dla_v1_qat.pth',
+    parser.add_argument('--output', default='checkpoints/unina_dla_qat.pth',
                        help='Output checkpoint')
     args = parser.parse_args()
     
@@ -1555,8 +1555,8 @@ Create file: `export_onnx.py`
 ONNX is an intermediate format that TensorRT can compile to optimized engines.
 
 Usage:
-    python export_onnx.py work_dirs/unina_dla_v1/epoch_100.pth \\
-                           --output checkpoints/unina_dla_v1.onnx
+    python export_onnx.py work_dirs/unina_dla/epoch_100.pth \\
+                           --output checkpoints/unina_dla.onnx
 """
 
 import torch
@@ -1630,7 +1630,7 @@ def export_to_onnx(model_path, output_path='model.onnx', input_shape=(1, 3, 640,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Export model to ONNX')
     parser.add_argument('model_path', help='Path to trained model checkpoint')
-    parser.add_argument('--output', default='checkpoints/unina_dla_v1.onnx',
+    parser.add_argument('--output', default='checkpoints/unina_dla.onnx',
                        help='Output ONNX file path')
     parser.add_argument('--input-shape', nargs=4, type=int,
                        default=[1, 3, 640, 640],
@@ -1649,7 +1649,7 @@ Create file: `compile_tensorrt.sh`
 #!/bin/bash
 # Compile ONNX model to TensorRT engine with DLA optimization
 
-MODEL_NAME="unina_dla_v1"
+MODEL_NAME="unina_dla"
 ONNX_PATH="checkpoints/${MODEL_NAME}.onnx"
 ENGINE_PATH="checkpoints/${MODEL_NAME}_dla.engine"
 
@@ -2143,7 +2143,7 @@ mkdir -p ~/unina_dla_runtime
 # From development machine:
 
 # Transfer compiled engine
-scp checkpoints/unina_dla_v1_dla.engine jetson_user@jetson_ip:~/models/
+scp checkpoints/unina_dla_dla.engine jetson_user@jetson_ip:~/models/
 
 # Transfer C++ runtime executable
 scp build/unina_inference jetson_user@jetson_ip:~/unina_dla_runtime/
@@ -2159,7 +2159,7 @@ scp test_cone_image.jpg jetson_user@jetson_ip:~/unina_dla_runtime/
 cd ~/unina_dla_runtime
 
 # Test with single image
-./unina_inference ~/models/unina_dla_v1_dla.engine test_cone_image.jpg
+./unina_inference ~/models/unina_dla_dla.engine test_cone_image.jpg
 
 # Output:
 # ✓ UNINA-DLA inference engine initialized successfully
@@ -2185,7 +2185,7 @@ Create file: `benchmark_jetson.py`
 Run this on the Jetson device to measure end-to-end latency.
 
 Usage:
-    python benchmark_jetson.py --engine models/unina_dla_v1_dla.engine
+    python benchmark_jetson.py --engine models/unina_dla_dla.engine
 """
 
 import tensorrt as trt
@@ -2273,7 +2273,7 @@ if __name__ == '__main__':
 
 Run on Jetson:
 ```bash
-python benchmark_jetson.py --engine ~/models/unina_dla_v1_dla.engine --iterations 200
+python benchmark_jetson.py --engine ~/models/unina_dla_dla.engine --iterations 200
 ```
 
 ### 12.2 Accuracy Validation
@@ -2287,7 +2287,7 @@ Create file: `validate_accuracy.py`
 Compares model predictions against ground truth.
 
 Usage:
-    python validate_accuracy.py --engine models/unina_dla_v1_dla.engine \\
+    python validate_accuracy.py --engine models/unina_dla_dla.engine \\
                                  --dataset cone_dataset/
 """
 
@@ -2424,10 +2424,10 @@ source ~/unina_dla_env/bin/activate
 python cone_dataset_analysis.py
 
 # 3. Train model with distillation
-python train_unina.py configs/unina_dla_v1_train.py --work-dir ./work_dirs/unina_dla_v1
+python train_unina.py configs/unina_dla_train.py --work-dir ./work_dirs/unina_dla
 
 # 4. Export to ONNX
-python export_onnx.py work_dirs/unina_dla_v1/epoch_100.pth
+python export_onnx.py work_dirs/unina_dla/epoch_100.pth
 
 # 5. Compile to TensorRT with DLA
 bash compile_tensorrt.sh
@@ -2439,14 +2439,14 @@ cd build && cmake .. && make -j$(nproc)
 ### Deployment Phase (Jetson Orin AGX)
 ```bash
 # 1. Transfer files
-scp checkpoints/unina_dla_v1_dla.engine jetson_user@jetson_ip:~/models/
+scp checkpoints/unina_dla_dla.engine jetson_user@jetson_ip:~/models/
 scp build/unina_inference jetson_user@jetson_ip:~/bin/
 
 # 2. Run inference
-~/bin/unina_inference ~/models/unina_dla_v1_dla.engine image.jpg
+~/bin/unina_inference ~/models/unina_dla_dla.engine image.jpg
 
 # 3. Benchmark
-python benchmark_jetson.py --engine ~/models/unina_dla_v1_dla.engine
+python benchmark_jetson.py --engine ~/models/unina_dla_dla.engine
 ```
 
 ---
@@ -2460,5 +2460,5 @@ python benchmark_jetson.py --engine ~/models/unina_dla_v1_dla.engine
 
 ---
 
-**This guide provides zero-ambiguity implementation steps for building UNINA-DLA-v1 from scratch to production deployment on NVIDIA Jetson Orin AGX.** Every function, configuration option, and procedure is specified with exact parameters and expected outputs.
+**This guide provides zero-ambiguity implementation steps for building UNINA-DLA from scratch to production deployment on NVIDIA Jetson Orin AGX.** Every function, configuration option, and procedure is specified with exact parameters and expected outputs.
 

@@ -1,4 +1,4 @@
-# **UNINA-Zero DLA Blueprint: A Comprehensive Research Report on Distilled, Hardware-Native Perception Architectures for Autonomous Racing**
+# **UNINA-DLA Blueprint: A Comprehensive Research Report on Distilled, Hardware-Native Perception Architectures for Autonomous Racing**
 
 ## **1\. Executive Summary and Strategic Imperative**
 
@@ -8,7 +8,7 @@ The UNINA-Zero project’s mandate—to achieve **Zero-Overhead Inference** on t
 
 To achieve the project goals, we must adopt a "hardware-first" design philosophy. This implies that the neural architecture must be derived directly from the silicon logic of the Deep Learning Accelerator (DLA), rather than adapting the hardware to fit the model. The DLA is a specialized, fixed-function accelerator designed for high efficiency and deterministic latency, but it lacks the flexibility of the GPU's CUDA cores.
 
-This report serves as the definitive blueprint for constructing **UNINA-DLA-v1**, a custom perception stack designed to completely bypass the GPU for inference. By targeting the DLA 2.0 architecture within the Orin SoC, which contributes approximately 105 sparse INT8 TOPS to the system's total throughput 1, we can achieve a dedicated, deterministic inference pipeline that operates in parallel with the GPU-bound SLAM and MPC stacks.
+This report serves as the definitive blueprint for constructing **UNINA-DLA**, a custom perception stack designed to completely bypass the GPU for inference. By targeting the DLA 2.0 architecture within the Orin SoC, which contributes approximately 105 sparse INT8 TOPS to the system's total throughput 1, we can achieve a dedicated, deterministic inference pipeline that operates in parallel with the GPU-bound SLAM and MPC stacks.
 
 Following an exhaustive red-teaming exercise of potential architectures—including Modified CSPDarknet, ConeNet-DLA, and various YOLO iterations—this research identifies a converged solution: a **RepVGG-based student backbone** distilled from a massive **YOLOv10-X teacher**, coupled with a **YOLOv10 "One-to-One" detection head**. This architecture leverages structural re-parameterization to collapse multi-branch topologies into a single-path stream of $3\\times3$ convolutions—the native dialect of the DLA’s Multiply-Accumulate (MAC) arrays. Furthermore, the integration of the NMS-free "One-to-One" head eliminates the latency-inducing Non-Maximum Suppression stage, enabling the DLA to write final detections directly to memory without GPU intervention.
 
@@ -44,7 +44,7 @@ A central theme in our research is the catastrophic impact of kGPU\_FALLBACK. Te
 
 * **The Mechanism of Failure:** When a fallback occurs, data must be synchronized and transferred between the DLA’s memory domain and the GPU’s memory domain. Although they share physical DRAM on the SoC, the access paths differ, and the handover requires cudaEventSynchronize calls that block execution.  
 * **Empirical Evidence:** Developer reports and benchmarking indicate that a model running primarily on DLA with frequent GPU fallbacks can exhibit **2x to 3x higher latency** than running purely on the GPU.8 The synchronization overhead dominates the actual compute time.  
-* **Strategic Directive:** The UNINA-DLA-v1 architecture must be designed for **100% DLA residency**. Any layer that triggers a fallback is considered a critical design flaw. This strictly rules out complex post-processing layers (like standard NMS implemented via EfficientNMS plugin) and specific tensor manipulations (like Gather, NonZero, or boolean masking) inside the model graph.1
+* **Strategic Directive:** The UNINA-DLA architecture must be designed for **100% DLA residency**. Any layer that triggers a fallback is considered a critical design flaw. This strictly rules out complex post-processing layers (like standard NMS implemented via EfficientNMS plugin) and specific tensor manipulations (like Gather, NonZero, or boolean masking) inside the model graph.1
 
 ## **3\. Architectural Red Teaming: Selecting the Student**
 
@@ -71,7 +71,7 @@ Using a stock YOLOv10 model 11 offers state-of-the-art accuracy and an NMS-free 
 * **Red Team Analysis:** While the head design is promising, the stock YOLOv10 backbone and activation functions are incompatible. As noted in Section 2.1.2, stock YOLOv10 uses **SiLU** activations throughout. deploying a SiLU-heavy model on DLA forces an FP16 execution path, halving the potential INT8 throughput and doubling memory bandwidth usage. Furthermore, stock YOLO models often rely on SPPF (Spatial Pyramid Pooling Fast) modules that may contain operations not fully optimized for the DLA's specific pooling engine restrictions.  
 * **Verdict:** **REJECTED (in stock form).** The architecture is sound algorithmically but requires modification for hardware compliance.
 
-### **3.4 The Converged Solution: UNINA-DLA-v1**
+### **3.4 The Converged Solution: UNINA-DLA**
 
 The red-teaming process dictates a hybrid architecture that synthesizes the strengths of the candidates while excising their weaknesses.
 
@@ -79,9 +79,9 @@ The red-teaming process dictates a hybrid architecture that synthesizes the stre
 * **Activation Policy:** A strict policy of **SiLU $\\to$ ReLU** replacement is enforced. ReLU is a single-cycle, zero-overhead operation on the DLA's SDP (Single Data Point) unit.  
 * **Head:** The **YOLOv10 "One-to-One"** head is integrated. By utilizing Consistent Dual Assignments during training, this head learns to output a sparse set of non-overlapping boxes. This eliminates NMS entirely. The model output is a simple tensor (e.g., $N \\times 6$) that the DLA can write directly to memory, requiring no GPU post-processing.13
 
-**Final Architecture: UNINA-DLA-v1** \= RepVGG-B0 Backbone (ReLU) \+ Rep-PAN Neck (ReLU) \+ YOLOv10 One-to-One Head (ReLU/Linear).
+**Final Architecture: UNINA-DLA** = RepVGG-B0 Backbone (ReLU) + Rep-PAN Neck (ReLU) + YOLOv10 One-to-One Head (ReLU/Linear).
 
-## **4\. UNINA-DLA-v1 Architecture Detail**
+## **4\. UNINA-DLA Architecture Detail**
 
 ### **4.1 Backbone: RepVGG-B0 and Mathematical Fusion**
 
@@ -145,9 +145,7 @@ Standard feature distillation fails for small objects because the loss function 
 
 * **ScaleKD Implementation:** We adopt Scale-Aware Knowledge Distillation (ScaleKD).3 This method decouples the teacher's features into scale-specific embeddings.  
 * Spatial Attention Mask: We generate a binary mask $M$ derived from the Teacher's high-confidence predictions. The feature loss $\\mathcal{L}\_{feat}$ is weighted by this mask:  
-  $$ \\mathcal{L}{feat} \= \\sum{l} |
-
-| (F\_T^{(l)} \- \\phi(F\_S^{(l)})) \\odot M^{(l)} ||^2 $$  
+  $$ \\mathcal{L}{feat} \= \\sum{l} | (F\_T^{(l)} \- \\phi(F\_S^{(l)})) \\odot M^{(l)} ||^2 $$  
 where $F\_T$ and $F\_S$ are teacher and student feature maps, and $\\phi$ is a $1\\times1$ convolution adapter to match channels. This mask forces the student to focus its limited capacity solely on the regions containing cones, effectively ignoring the asphalt and sky.1
 
 ### **5.2 Vector 2: Logit-Based Response Distillation**
@@ -168,7 +166,7 @@ Deploying an INT8 model on DLA requires more than just a calibration step. RepVG
 
 ### **6.1 The QAT Workflow**
 
-1. **FP32 Convergence:** Train the UNINA-DLA-v1 student to convergence using the Tri-Vector distillation.  
+1. **FP32 Convergence:** Train the UNINA-DLA student to convergence using the Tri-Vector distillation.  
 2. **Structural Fusion:** Perform the RepVGG fusion (BN folding \+ branch merging) *before* inserting quantization nodes. This ensures the QAT process models the actual inference-time numerics.  
 3. **QAT Injection:** Insert QuantStub and DeQuantStub nodes. Replace nn.Conv2d and nn.ReLU with their quantized counterparts (quant\_nn.QuantConv2d, quant\_nn.QuantReLU) using the NVIDIA pytorch-quantization toolkit.22  
 4. **Entropy Calibration:** Use Entropy calibration for activations. Unlike Max calibration, which is sensitive to outliers, Entropy calibration minimizes the KL divergence between the FP32 and INT8 distributions, preserving the information content of small, low-magnitude cone activations.1  
@@ -183,7 +181,7 @@ The final detection head layers (the $1\\times1$ convolutions predicting box coo
 
 ## **7\. Implementation Blueprint: MMYOLO and PyTorch**
 
-This section provides the precise configuration and code structures required to realize UNINA-DLA-v1 within the MMYOLO framework.
+This section provides the precise configuration and code structures required to realize UNINA-DLA within the MMYOLO framework.
 
 ### **7.1 Registering the Custom RepVGG-ReLU Backbone**
 
@@ -227,7 +225,7 @@ class RepVGG\_DLA(BaseBackbone):
                 outs.append(x)  
         return tuple(outs)
 
-### **7.2 Configuration File (mmyolo/configs/unina\_dla\_v1.py)**
+### **7.2 Configuration File (mmyolo/configs/unina_dla.py)**
 
 This configuration file assembles the pieces. Note the explicit act\_cfg and use\_one\_to\_one flags.
 
@@ -292,17 +290,17 @@ We assume the model has been trained and QAT-calibrated.
 
 1. **Export to ONNX:** Use the deployment config (where deploy=True in backbone/neck) to fuse all RepVGG blocks. Ensure dynamic axes are disabled; DLA requires static shapes.  
    Bash  
-   python tools/export\_model.py \\  
-       configs/unina\_dla\_v1.py \\  
-       checkpoints/unina\_dla\_v1\_qat.pth \\  
-       \--output-file unina\_dla\_v1.onnx \\  
-       \--input-shape 1 3 640 640 \\  
-       \--opset-version 13
+   python tools/export_model.py \
+       configs/unina_dla.py \
+       checkpoints/unina_dla_qat.pth \
+       --output-file unina_dla.onnx \
+       --input-shape 1 3 640 640 \
+       --opset-version 13
 
 2. **Compile with trtexec:** This step compiles the ONNX graph into a DLA-compatible TensorRT engine. The flags are critical.  
    Bash  
-   trtexec \--onnx=unina\_dla\_v1.onnx \\  
-           \--saveEngine=unina\_dla\_v1.engine \\  
+   trtexec --onnx=unina_dla.onnx \
+           --saveEngine=unina_dla.engine \
            \--useDLACore=0 \\  
            \--int8 \\  
            \--fp16 \\  
@@ -393,7 +391,7 @@ public:
 
 ## **9\. Conclusion**
 
-The **UNINA-DLA-v1** blueprint represents the optimal convergence of algorithmic innovation and rigorous hardware engineering for Formula Student Driverless. By explicitly rejecting the complexity of CSPDarknet and the non-determinism of standard YOLO heads, and instead adopting a **RepVGG-B0 \+ YOLOv10-OneToOne** architecture, we satisfy the critical constraints of the NVIDIA Orin DLA.
+The **UNINA-DLA** blueprint represents the optimal convergence of algorithmic innovation and rigorous hardware engineering for Formula Student Driverless. By explicitly rejecting the complexity of CSPDarknet and the non-determinism of standard YOLO heads, and instead adopting a **RepVGG-B0 + YOLOv10-OneToOne** architecture, we satisfy the critical constraints of the NVIDIA Orin DLA.
 
 This architecture achieves:
 
@@ -402,7 +400,7 @@ This architecture achieves:
 3. **High Accuracy:** Through the Tri-Vector distillation strategy (ScaleKD) and Sensitive-Layer QAT.  
 4. **Zero-Overhead Integration:** Through C++ Zero-Copy memory mapping.
 
-Implementing this blueprint will provide the UNINA-Zero team with a perception system that is not merely fast, but "reflex-like"—decoupled from GPU load and capable of the sustained, low-latency performance required to push the limits of autonomous racing.
+Implementing this blueprint will provide the UNINA-DLA team with a perception system that is not merely fast, but "reflex-like"—decoupled from GPU load and capable of the sustained, low-latency performance required to push the limits of autonomous racing.
 
 #### **Bibliografia**
 

@@ -15,7 +15,7 @@ import argparse
 import yaml
 import os
 
-def train_distillation(epochs=100, batch_size=16, data_yaml='unina_dla/config/unina_dla_data.yaml', teacher_path=None, exp_name='unina_dla_distill'):
+def train_distillation(epochs=100, batch_size=16, data_yaml='unina_dla/config/unina_dla_data.yaml', teacher_path=None, exp_name='unina_dla'):
     print(f"Initializing Distillation Pipeline (Tri-Vector)...")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")

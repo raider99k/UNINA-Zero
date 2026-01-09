@@ -171,7 +171,7 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--checkpoint', type=str, default='unina_dla.pth')
+    parser.add_argument('--checkpoint', type=str, default='unina-dla.pth')
     parser.add_argument('--data', type=str, default='unina_dla/config/unina_dla_data.yaml')
     parser.add_argument('--epochs', type=int, default=10)
     args = parser.parse_args()

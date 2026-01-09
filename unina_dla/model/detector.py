@@ -6,9 +6,9 @@ from unina_dla.model.head.yolov10_head import YOLOv10Head
 
 class UNINA_DLA_v1(nn.Module):
     """
-    Complete UNINA-DLA-v1 Detector.
+    Complete UNINA-DLA Detector.
     
-    Architecture: RepVGG-B0 + Rep-PAN + YOLOv10-O2O
+    Architecture: RepVGG-B0 + Rep-PAN + YOLOv10-DLA
     
     Features:
     - 100% DLA-compatible operations
@@ -23,7 +23,7 @@ class UNINA_DLA_v1(nn.Module):
     """
     
     def __init__(self, num_classes=4, input_size=(640, 640), deploy=False):
-        super(UNINA_DLA_v1, self).__init__()
+        super(UNINA_DLA, self).__init__()
         self.input_size = input_size
         self.num_classes = num_classes
         self.deploy = deploy

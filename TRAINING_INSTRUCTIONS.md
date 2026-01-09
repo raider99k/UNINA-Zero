@@ -1,6 +1,6 @@
-# UNINA-Zero: Model Training & Deployment Instructions
+# UNINA-DLA: Model Training & Deployment Instructions
 
-This guide provides step-by-step instructions for training the UNINA-Zero detector, from initial teacher training to DLA-optimized ONNX export.
+This guide provides step-by-step instructions for training the UNINA-DLA detector, from initial teacher training to DLA-optimized ONNX export.
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ python scripts/train_distillation.py \
     --data unina_dla/config/unina_dla_data.yaml \
     --epochs 100 \
     --batch 16 \
-    --exp_name distillation_run
+    --exp_name unina_dla
 ```
 
 - **Objective**: Match the feature maps and prediction distributions of the teacher while maintaining a DLA-native architecture.
