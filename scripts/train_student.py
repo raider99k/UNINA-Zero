@@ -372,7 +372,7 @@ def main():
     parser.add_argument('--data', type=str, default='unina_dla/config/unina_dla_data.yaml')
     parser.add_argument('--epochs_distill', type=int, default=100)
     parser.add_argument('--epochs_qat', type=int, default=10)
-    parser.add_argument('--batch', type=int, default=16)
+    parser.add_argument('--batch', type=int, default=32)
     parser.add_argument('--skip_distillation', action='store_true')
     parser.add_argument('--skip_qat', action='store_true')
     parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint')

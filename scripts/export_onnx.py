@@ -10,7 +10,7 @@ except ImportError:
 import argparse
 import os
 
-def export_onnx(checkpoint, output, qat=False, num_classes=4):
+def export_onnx(checkpoint, output, qat=False, num_classes=5):
     print(f"Exporting model to {output} (QAT={qat}, num_classes={num_classes})...")
     
     # 1. Load Model
@@ -100,7 +100,7 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=str, default='unina-dla.pth')
     parser.add_argument('--output', type=str, default='unina-dla.onnx')
     parser.add_argument('--qat', action='store_true', help="Export QAT model")
-    parser.add_argument('--num_classes', type=int, default=4, help="Number of classes")
+    parser.add_argument('--num_classes', type=int, default=5, help="Number of classes")
     
     args = parser.parse_args()
     

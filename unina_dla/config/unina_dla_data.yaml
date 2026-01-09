@@ -1,20 +1,21 @@
 # FSG Cone Dataset Configuration for UNINA-DLA
 
-# Path configuration - UPDATE THESE PATHS to your actual dataset location
-path: ../datasets/fsg_cones  # dataset root dir
-train: images/train  # train images (relative to 'path')
-val: images/val  # val images (relative to 'path')
+# Path configuration - UPDATE THE 'path' VARIABLE to your absolute dataset location
+path: ~/Documents/AS_IA_STUFF_S25/dataset_FINALE_UNITO
+train: train/images  # train images (relative to 'path')
+val: valid/images    # val images (relative to 'path')
 test: images/test # test images (optional)
 
 # Classes
 names:
-  0: blue_cone
-  1: yellow_cone
-  2: orange_cone
-  3: big_orange_cone
+  0: BACKGROUND
+  1: big_orange_cone
+  2: blue_cone
+  3: little_orange_cone
+  4: yellow_cone
 
 # Number of classes
-nc: 4
+nc: 5
 
 # DLA Requirements - Static Shapes
 # Unlike standard YOLO, we MUST enforce strict resizing to avoid DLA dynamic shape errors
