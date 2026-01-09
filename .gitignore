@@ -1,0 +1,29 @@
+# Virtual Environment
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Agent Rules and Artifacts
+.agent/
+.gemini/
+.agent_rules
+
+# Tests and Debug
+tests/
+.pytest_cache/
+debug_*.py
+inspect_*.py
+repro_crash.py
+
+# Training Outputs and Checkpoints
+runs/
+checkpoints/
+
+# Model Files (keep if needed, but user mentioned excluding "testing and debug files" which often includes exported models)
+*.onnx
+*.onnx.data
+
+# OS Specific
+.DS_Store
+Thumbs.db

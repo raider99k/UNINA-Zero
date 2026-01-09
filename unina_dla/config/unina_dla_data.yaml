@@ -1,0 +1,37 @@
+# FSG Cone Dataset Configuration for UNINA-DLA
+
+# Path configuration - UPDATE THESE PATHS to your actual dataset location
+path: ../datasets/fsg_cones  # dataset root dir
+train: images/train  # train images (relative to 'path')
+val: images/val  # val images (relative to 'path')
+test: images/test # test images (optional)
+
+# Classes
+names:
+  0: blue_cone
+  1: yellow_cone
+  2: orange_cone
+  3: big_orange_cone
+
+# Number of classes
+nc: 4
+
+# DLA Requirements - Static Shapes
+# Unlike standard YOLO, we MUST enforce strict resizing to avoid DLA dynamic shape errors
+imgsz: 640  # inference size (pixels)
+
+# Hardware-Aware Augmentations
+# We disable extensive color jittering for distillation to keep teacher/student feature distributions closer
+hsv_h: 0.015  # image HSV-Hue augmentation (fraction)
+hsv_s: 0.7  # image HSV-Saturation augmentation (fraction)
+hsv_v: 0.4  # image HSV-Value augmentation (fraction)
+degrees: 0.0  # image rotation (+/- deg)
+translate: 0.1  # image translation (+/- fraction)
+scale: 0.5  # image scale (+/- gain)
+shear: 0.0  # image shear (+/- deg)
+perspective: 0.0  # image perspective (+/- fraction), range 0-0.001
+flipud: 0.0  # image flip up-down (probability)
+fliplr: 0.5  # image flip left-right (probability)
+mosaic: 1.0  # image mosaic (probability)
+mixup: 0.1  # image mixup (probability)
+copy_paste: 0.0  # segment copy-paste (probability)
