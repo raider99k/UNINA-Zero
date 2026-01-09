@@ -38,23 +38,31 @@ class RepVGG_B0(nn.Module):
         
         self.stages = nn.ModuleList()
         self.in_channels = 3  # RGB image
+
+        # Keep track of output channels for each stage
+        self.stage_out_channels = {}
         
         # Stage 0: 1 layer, 64 channels, stride 2 (resolution 320x320)
         self.stage0 = self._make_stage(64, 1, stride=2)
+        self.stage_out_channels[0] = 64
         
         # Stage 1: 4 layers, 128 channels, stride 2 (resolution 160x160) - P2
         self.stage1 = self._make_stage(128, 4, stride=2)
+        self.stage_out_channels[1] = 128
         
         # Stage 2: 6 layers, 256 channels, stride 2 (resolution 80x80) - P3
         self.stage2 = self._make_stage(256, 6, stride=2)
+        self.stage_out_channels[2] = 256
         
         # Stage 3: 16 layers, 512 channels, stride 2 (resolution 40x40) - P4
         # Original RepVGG-B0 has 256->512 here? No, let's use the plan's widths.
         # Plan says: S3: 512ch, S4: 512ch.
         self.stage3 = self._make_stage(512, 16, stride=2)
+        self.stage_out_channels[3] = 512
         
         # Stage 4: 1 layer, 512 channels, stride 2 (resolution 20x20) - P5
         self.stage4 = self._make_stage(512, 1, stride=2)
+        self.stage_out_channels[4] = 512
 
     def _make_stage(self, width, num_blocks, stride):
         strides = [stride] + [1] * (num_blocks - 1)
@@ -68,6 +76,11 @@ class RepVGG_B0(nn.Module):
             ))
             self.in_channels = width
         return nn.Sequential(*blocks)
+
+    @property
+    def out_channels(self):
+        """Returns the list of output channels based on out_indices."""
+        return [self.stage_out_channels[i] for i in self.out_indices]
 
     def forward(self, x):
         outs = []

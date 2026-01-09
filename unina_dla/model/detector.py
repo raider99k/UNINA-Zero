@@ -31,10 +31,13 @@ class UNINA_DLA_v1(nn.Module):
         # Backbone (P3, P4, P5)
         self.backbone = RepVGG_B0(out_indices=(2, 3, 4), deploy=deploy)
         
-        # Determine backbone output channels? 
-        # Standard B0: 64, 128, 256, 512, 512.
-        # But let's assume fixed for now as defined in RepVGG_B0.
-        bb_channels = [256, 512, 512] 
+        # Determine backbone output channels
+        if hasattr(self.backbone, 'out_channels'):
+            bb_channels = self.backbone.out_channels
+        else:
+            # Fallback for backbones that don't expose channels property
+            # This assumes standard RepVGG-B0 as previously hardcoded
+            bb_channels = [256, 512, 512]
         
         # Neck
         self.neck = RepPAN(
