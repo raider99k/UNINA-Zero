@@ -4,8 +4,10 @@ import torchvision
 def dfl_integral(dfl_preds, reg_max=16):
     """
     Decodes DFL distribution into scalar coordinates.
+    Assumes dfl_preds are unnormalized logits, and applies softmax.
+
     Args:
-        dfl_preds: [B, 4*reg_max, H, W] or [B, N, 4*reg_max]
+        dfl_preds: [B, 4*reg_max, H, W] or [B, N, 4*reg_max] (logits)
         reg_max: number of bins
     Returns:
         coords: [B, 4, H, W] or [B, N, 4]
