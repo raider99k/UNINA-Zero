@@ -1,6 +1,8 @@
 
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 try:
     from ultralytics.utils.metrics import ap_per_class
@@ -8,11 +10,14 @@ except ImportError:
     ap_per_class = None
 
 class UNINAMetrics:
-    def __init__(self, num_classes=1, plot=False, names=None):
+    def __init__(self, num_classes=1, plot=False, names=None, save_dir=None):
         self.num_classes = num_classes
         self.plot = plot
+        self.save_dir = save_dir
         self.names = names or {i: f'class{i}' for i in range(num_classes)}
         self.stats = [] # list of (correct, conf, pred_cls, target_cls)
+        # Confusion matrix: rows=GT, cols=Pred, +1 for background
+        self.confusion_matrix = np.zeros((num_classes + 1, num_classes + 1), dtype=np.int64)
         
     def update(self, preds, targets):
         """
@@ -85,6 +90,7 @@ class UNINAMetrics:
     def _process_batch(self, detections, labels, iouv):
         """
         Return correct predictions matrix. Both sets of boxes are in (x1, y1, x2, y2) format.
+        Also updates the confusion matrix.
         Arguments:
             detections (Tensor): (N, 6) [x1, y1, x2, y2, conf, class]
             labels (Tensor): (M, 5) [class, x1, y1, x2, y2]
@@ -98,6 +104,9 @@ class UNINAMetrics:
         iou = torchvision.ops.box_iou(labels[:, 1:], detections[:, :4])
         x = torch.where((iou >= iouv[0]) & (labels[:, 0:1] == detections[:, 5]))  # IoU > 0.5 and class match
         
+        matched_gt = set()
+        matched_pred = set()
+        
         if x[0].shape[0]:
             matches = torch.cat((torch.stack(x, 1), iou[x[0], x[1]][:, None]), 1).cpu().numpy()
             if x[0].shape[0] > 1:
@@ -109,6 +118,16 @@ class UNINAMetrics:
             matches = torch.from_numpy(matches).to(detections.device)
             matches = matches[matches[:, 2].argsort()[::-1]]
             
+            # Update confusion matrix for matched predictions
+            for m in matches:
+                gt_idx, pred_idx, iou_val = int(m[0]), int(m[1]), float(m[2])
+                if iou_val >= 0.5:  # Use IoU@0.5 for confusion matrix
+                    gt_cls = int(labels[gt_idx, 0])
+                    pred_cls = int(detections[pred_idx, 5])
+                    self.confusion_matrix[gt_cls, pred_cls] += 1
+                    matched_gt.add(gt_idx)
+                    matched_pred.add(pred_idx)
+            
             tp = matches[:, 1].long()
             for i, threshold in enumerate(iouv):
                  # matches[:, 2] is iou
@@ -116,8 +135,21 @@ class UNINAMetrics:
                  m = matches[matches[:, 2] >= threshold]
                  if m.shape[0]:
                      correct[m[:, 1].long(), i] = True
+        
+        # False negatives: GT boxes not matched
+        for gt_idx in range(labels.shape[0]):
+            if gt_idx not in matched_gt:
+                gt_cls = int(labels[gt_idx, 0])
+                self.confusion_matrix[gt_cls, self.num_classes] += 1  # Predicted as background
+        
+        # False positives: Predictions not matched
+        for pred_idx in range(detections.shape[0]):
+            if pred_idx not in matched_pred:
+                pred_cls = int(detections[pred_idx, 5])
+                self.confusion_matrix[self.num_classes, pred_cls] += 1  # GT was background
                      
         return correct
+
 
     def compute(self):
         stats = [torch.cat(x, 0).cpu().numpy() for x in zip(*self.stats)]  # to numpy
@@ -140,3 +172,20 @@ class UNINAMetrics:
         
         return {'mAP50': 0.0, 'mAP50-95': 0.0, 'precision': 0.0, 'recall': 0.0}
 
+    def plot_confusion_matrix(self, filename=None):
+        """Plot and save the confusion matrix."""
+        labels = [self.names.get(i, f'class{i}') for i in range(self.num_classes)] + ['background']
+        
+        fig, ax = plt.subplots(figsize=(10, 8))
+        sns.heatmap(self.confusion_matrix, annot=True, fmt='d', cmap='Blues',
+                    xticklabels=labels, yticklabels=labels, ax=ax)
+        ax.set_xlabel('Predicted')
+        ax.set_ylabel('Ground Truth')
+        ax.set_title('Confusion Matrix')
+        
+        save_path = filename or (self.save_dir + '/confusion_matrix.png' if self.save_dir else 'confusion_matrix.png')
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close()
+        print(f"Confusion matrix saved to {save_path}")
+        return save_path

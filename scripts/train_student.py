@@ -17,6 +17,9 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import argparse
 import os
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image, ImageDraw
 
 from unina_dla.model.unina_dla import UNINA_DLA
 from unina_dla.model.teacher_model import get_teacher_model
@@ -28,6 +31,72 @@ from ultralytics.data import build_yolo_dataset, build_dataloader
 from ultralytics.data.utils import check_det_dataset
 from ultralytics.utils import DEFAULT_CFG, IterableSimpleNamespace
 from ultralytics.utils.loss import v8DetectionLoss
+from ultralytics.utils.plotting import Annotator, colors
+
+
+# ============================================================================
+# UTILITIES: VISUALIZATION
+# ============================================================================
+def save_batch_image(batch, filename, names):
+    """Save a batch of images with ground truth boxes for inspection."""
+    imgs = batch['img'].numpy()  # [B, 3, H, W]
+    targets = batch['cls']  # [N, 6] (batch_idx, cls, x, y, w, h)
+    
+    # Take first image in batch
+    img = imgs[0].transpose(1, 2, 0)
+    img = (img * 1.0).astype(np.uint8) # Ultralytics dataloader might give 0-255 uint8 or float
+    # Ensure it's 0-255 uint8 for PIL
+    if img.max() <= 1.0:
+        img = (img * 255).astype(np.uint8)
+    
+    h, w, _ = img.shape
+    img_pil = Image.fromarray(img)
+    draw = ImageDraw.Draw(img_pil)
+    
+    # Filter targets for the first image
+    img_targets = targets[targets[:, 0] == 0]
+    
+    for t in img_targets:
+        cls_id = int(t[1])
+        # x, y, w, h are normalized
+        cx, cy, bw, bh = t[2], t[3], t[4], t[5]
+        x1 = (cx - bw/2) * w
+        y1 = (cy - bh/2) * h
+        x2 = (cx + bw/2) * w
+        y2 = (cy + bh/2) * h
+        
+        color = (255, 0, 0) # Default red
+        label = names.get(cls_id, f"class_{cls_id}")
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
+        draw.text((x1, y1 - 10), label, fill=color)
+    
+    img_pil.save(filename)
+    print(f"Batch inspection image saved to {filename}")
+
+
+def plot_results(metrics, filename, title="Training Metrics"):
+    """Plot evolution of Loss and mAP."""
+    epochs = range(1, len(metrics['loss']) + 1)
+    
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    
+    color = 'tab:red'
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss', color=color)
+    ax1.plot(epochs, metrics['loss'], color=color, marker='o', label='Total Loss')
+    ax1.tick_params(axis='y', labelcolor=color)
+    
+    ax2 = ax1.twinx()
+    color = 'tab:blue'
+    ax2.set_ylabel('mAP50', color=color)
+    ax2.plot(epochs, metrics['map'], color=color, marker='s', label='mAP@50')
+    ax2.tick_params(axis='y', labelcolor=color)
+    
+    plt.title(title)
+    fig.tight_layout()
+    plt.savefig(filename)
+    plt.close()
+    print(f"Results plot saved to {filename}")
 
 
 # ============================================================================
@@ -103,11 +172,18 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
     best_map = 0.0
     best_ckpt_path = os.path.join(args.output_dir, 'best_distill.pth')
     
+    history = {'loss': [], 'map': []}
+    
     for epoch in range(args.epochs_distill):
         student.train()
+        epoch_loss = 0
         pbar = tqdm(train_loader, desc=f"Distill Epoch {epoch+1}/{args.epochs_distill}")
         
         for i, batch in enumerate(pbar):
+            # Save inspection image on first batch of first epoch
+            if epoch == 0 and i == 0:
+                save_batch_image(batch, os.path.join(args.output_dir, 'train_batch0.jpg'), data_cfg.get('names', {}))
+
             imgs = batch['img'].to(device).float() / 255.0
             optimizer.zero_grad()
             
@@ -131,6 +207,7 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
             total_loss.backward()
             optimizer.step()
             
+            epoch_loss += total_loss.item()
             pbar.set_postfix({'loss': total_loss.item()})
             
             step = epoch * len(train_loader) + i
@@ -138,10 +215,18 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
 
         scheduler.step()
         
+        avg_loss = epoch_loss / len(train_loader)
+        history['loss'].append(avg_loss)
+        
         # Validation
-        val_metrics = validate(student, val_loader, device, num_classes=data_cfg.get('nc', 4), names=data_cfg.get('names'))
+        val_metrics, metrics_obj = validate(student, val_loader, device, num_classes=data_cfg.get('nc', 4), names=data_cfg.get('names'), save_dir=args.output_dir)
         print(f"Epoch {epoch+1} mAP50: {val_metrics['mAP50']:.4f}")
         writer.add_scalar('Distill/mAP50', val_metrics['mAP50'], epoch)
+        history['map'].append(val_metrics['mAP50'])
+        
+        # Plot periodically
+        if (epoch + 1) % 5 == 0 or (epoch + 1) == args.epochs_distill:
+            plot_results(history, os.path.join(args.output_dir, 'results_distill.png'), "Phase 1: Distillation Metrics")
         
         # Checkpoint
         torch.save(student.state_dict(), os.path.join(args.output_dir, 'last_distill.pth'))
@@ -153,8 +238,12 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
     for h in hooks:
         h.remove()
     
+    # Final confusion matrix for distillation phase
+    metrics_obj.plot_confusion_matrix(os.path.join(args.output_dir, 'confusion_matrix_distill.png'))
+    
     print(f"Phase 1 Complete. Best mAP50: {best_map:.4f}")
     return best_ckpt_path
+
 
 
 # ============================================================================
@@ -220,24 +309,42 @@ def run_qat(args, device, data_cfg, train_loader, distill_ckpt, writer):
     optimizer = optim.AdamW(model.parameters(), lr=1e-5)
     
     qat_ckpt_path = os.path.join(args.output_dir, 'qat_final.pth')
+    history = {'loss': [], 'map': []}
     
     for epoch in range(args.epochs_qat):
         model.train()
+        epoch_loss = 0
         pbar = tqdm(train_loader, desc=f"QAT Epoch {epoch+1}/{args.epochs_qat}")
         for batch in pbar:
             imgs = batch['img'].to(device).float() / 255.0
             optimizer.zero_grad()
             preds = model(imgs)
             loss, loss_items = loss_adapter(preds, batch)
-            loss.sum().backward()
+            l_sum = loss.sum()
+            l_sum.backward()
             optimizer.step()
-            pbar.set_postfix({'loss': loss.sum().item()})
+            
+            epoch_loss += l_sum.item()
+            pbar.set_postfix({'loss': l_sum.item()})
         
-        writer.add_scalar('QAT/Loss', loss.sum().item(), epoch)
+        avg_loss = epoch_loss / len(train_loader)
+        history['loss'].append(avg_loss)
+        writer.add_scalar('QAT/Loss', avg_loss, epoch)
+        
+        # QAT validation (optional but good for plots)
+        val_metrics, metrics_obj = validate(model, val_loader, device, num_classes=data_cfg.get('nc', 4), names=data_cfg.get('names'), save_dir=args.output_dir)
+        history['map'].append(val_metrics['mAP50'])
+        writer.add_scalar('QAT/mAP50', val_metrics['mAP50'], epoch)
+        
+        plot_results(history, os.path.join(args.output_dir, 'results_qat.png'), "Phase 2: QAT Metrics")
+    
+    # Final confusion matrix for QAT phase
+    metrics_obj.plot_confusion_matrix(os.path.join(args.output_dir, 'confusion_matrix_qat.png'))
         
     torch.save(model.state_dict(), qat_ckpt_path)
     print(f"Phase 2 Complete. Saved to {qat_ckpt_path}")
     return qat_ckpt_path
+
 
 
 # ============================================================================

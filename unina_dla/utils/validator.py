@@ -4,10 +4,10 @@ from unina_dla.utils.box_ops import decode_bboxes, non_max_suppression
 from unina_dla.utils.metrics import UNINAMetrics
 from tqdm import tqdm
 
-def validate(model, dataloader, device, conf_thres=0.001, iou_thres=0.6, strides=[8, 16, 32], num_classes=1, names=None):
+def validate(model, dataloader, device, conf_thres=0.001, iou_thres=0.6, strides=[8, 16, 32], num_classes=1, names=None, save_dir=None):
     model.eval()
     
-    metrics = UNINAMetrics(num_classes=num_classes, names=names)
+    metrics = UNINAMetrics(num_classes=num_classes, names=names, save_dir=save_dir)
     
     # Validation Loop
     # Suppress tqdm if inside training? maybe pass pbar
@@ -97,4 +97,4 @@ def validate(model, dataloader, device, conf_thres=0.001, iou_thres=0.6, strides
             
             metrics.update(dets, targets)
             
-    return metrics.compute()
+    return metrics.compute(), metrics
