@@ -27,7 +27,7 @@ The Orin AGX features two DLA cores (DLA 2.0), distinct from the Ampere GPU. Whi
 A critical but often overlooked constraint is the internal Convolution Buffer (CBUF). The DLA loads weights and activation data into this dedicated SRAM (1 MiB per core on Orin) to perform operations.4
 
 * **The Thrashing Phenomenon:** If a layer’s parameters or intermediate feature maps exceed the CBUF capacity, the DLA cannot process the layer in a single pass. It must fetch data from the global DRAM or system SRAM, process a tile, write it back, and fetch the next tile. This behavior, known as "memory thrashing," causes significant latency spikes.  
-* **Architectural Implication:** Our student architecture must prioritize layer configurations (kernel size, channel depth) that fit residentially within the CBUF. RepVGG’s fused $3\\times3$ convolutions are ideal here, as they present a predictable memory footprint compared to the irregular access patterns of multi-path Inception or NAS-searched blocks found in models like EfficientNet or MobileNet.1 Design choices must cap channel depths at 512 in deeper layers to avoid overflowing the CBUF.
+* **Architectural Implication:** Our student architecture must prioritize layer configurations (kernel size, channel depth) that fit residentially within the CBUF. RepVGG’s fused $3 \times 3$ convolutions are ideal here. Design choices must ensure that the weight volume ($C_{in} \div G \times C_{out} \times K_H \times K_W$) remains strictly below **1,000,000 bytes (1 MB)** to avoid the performance cliff of sub-tiling.30
 
 #### **2.1.2 The "Supported Layer" Minefield**
 
@@ -127,7 +127,7 @@ Standard YOLO necks (PANet) rely heavily on element-wise additions to merge feat
 
 * **Rep-PAN Strategy:** We employ a re-parameterizable PANet.1 Similar to the backbone, the fusion blocks in the neck are trained as multi-branch structures but fused into single convolutions for inference.  
 * **Concatenation Preference:** Where possible, we prioritize concatenation over addition. The DLA's concatenation engine is generally more efficient than its element-wise engine because it involves simple memory addressing rather than arithmetic fetching. The Rep-PAN ensures that after concatenation, the subsequent processing is done via dense convolutions that fully utilize the hardware.
-* **CBUF Optimization:** In fusion layers where input channels reach 512, we utilize **Grouped Convolutions (groups=2)**. This reduces the weight volume from 1.125 MB to \~0.56 MB, ensuring the operation fits entirely within the 1 MiB DLA Convolution Buffer (CBUF), eliminating memory thrashing and maximizing throughput.17
+* **CBUF Optimization:** In all fusion layers where input channels reach 512 (`p4_fusion`, `p3_fusion`, `n3_fusion`, and `n4_fusion`), we utilize **Grouped Convolutions (groups=2)**. This reduces the weight volume from 1.18 MB to \~0.59 MB, ensuring the operation fits entirely within the 1 MiB DLA Convolution Buffer (CBUF), eliminating memory thrashing and maximizing throughput.17
 
 ### **4.3 Head: YOLOv10 One-to-One (NMS-Free)**
 
