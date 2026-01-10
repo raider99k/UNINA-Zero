@@ -25,6 +25,9 @@ class YOLOv10Head(nn.Module):
         self.reg_max = reg_max
         self.deploy = deploy
         
+        # Define strides explicitly to silence validation warning
+        self.stride = torch.tensor([8, 16, 32])
+        
         # Per-scale detection modules
         self.stems = nn.ModuleList()      # Initial convolution
         self.cls_convs = nn.ModuleList()  # Classification branch
