@@ -54,11 +54,14 @@ def save_batch_image(batch, filename, names):
         target_idx = int(unique_indices[0].item())
     
     # Take selected image
+    # Take selected image
     img = imgs[target_idx].transpose(1, 2, 0)
-    img = (img * 1.0).astype(np.uint8) # Ultralytics dataloader might give 0-255 uint8 or float
-    # Ensure it's 0-255 uint8 for PIL
+    
+    # FIX: Check scale BEFORE casting to avoid truncating 0-1 floats to 0
     if img.max() <= 1.0:
-        img = (img * 255).astype(np.uint8)
+        img = img * 255.0
+        
+    img = img.astype(np.uint8)
     
     h, w, _ = img.shape
     img_pil = Image.fromarray(img)
