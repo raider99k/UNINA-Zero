@@ -38,7 +38,16 @@ class UNINA_DLA(nn.Module):
         neck_features = self.neck(features)
         
         # Head
-        return self.head(neck_features)
+        outputs = self.head(neck_features)
+        
+        if self.deploy:
+            # When in deploy (inference) mode, we apply sigmoid to class outputs
+            # to offload the activation work from the CPU to the DLA hardware.
+            # Head returns: (reg_outputs, cls_outputs)
+            reg_outs, cls_outs = outputs
+            return reg_outs, [c.sigmoid() for c in cls_outs]
+            
+        return outputs
 
     def switch_to_deploy(self):
         """

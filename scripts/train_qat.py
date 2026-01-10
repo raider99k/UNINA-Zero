@@ -51,7 +51,7 @@ class YOLOv8LossAdapter:
         # We need to make sure cfg contains box, cls, dfl gains
         # DEFAULT_CFG should have them.
         self.mock_model = MockModel(cfg, head_attrs)
-        self.loss_fn = v10DetectionLoss(self.mock_model)
+        self.loss_fn = v10DetectionLoss(self.mock_model, student_only=True)
 
     def __call__(self, preds, batch):
         """

@@ -12,10 +12,11 @@ class v10DetectionLoss(v8DetectionLoss):
     NMS-free training by enforcing strict one-to-one matching during the
     dual assignment phase (if enabled) or as the primary assignment.
     """
-    def __init__(self, model, tal_topk=10):
+    def __init__(self, model, tal_topk=10, student_only=False):
         super().__init__(model, tal_topk=tal_topk)
         # One-to-One assigner uses topk=1 to ensure unique best match
         self.assigner_o2o = TaskAlignedAssigner(topk=1, num_classes=self.nc, alpha=0.5, beta=6.0)
+        self.student_only = student_only
 
     def __call__(self, preds, batch):
         """Calculate loss."""
@@ -50,40 +51,36 @@ class v10DetectionLoss(v8DetectionLoss):
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy
 
         # Assignment
-        # One-to-Many (Standard v8/v10 auxiliary)
-        _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
-            pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
-            anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
-
         # One-to-One (NMS-Free primary)
         # Using TAL with topk=1 is a strong approximation of Hungarian for YOLOv10
         _, target_bboxes_o2o, target_scores_o2o, fg_mask_o2o, _ = self.assigner_o2o(
             pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
-            
-        # We compute loss on O2O targets primarily for the NMS-free head
-        # In a full v10 implementation, we would sum both losses.
-        # For UNINA_DLA simplified student, we focus on the O2O signal to ensure NMS-free capability.
-        
-        # Compute Loss for One-to-Many (The "Teacher" signal)
-        target_scores_sum = max(target_scores.sum(), 1)
-        target_bboxes /= stride_tensor
-        loss[0], loss[2] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
-                                          target_scores_sum, fg_mask)
-        loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum
 
         # Compute Loss for One-to-One (The "Student" NMS-free signal)
         target_scores_sum_o2o = max(target_scores_o2o.sum(), 1)
-        target_bboxes_o2o /= stride_tensor
-        loss_o2o_box, loss_o2o_dfl = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes_o2o, target_scores_o2o,
+        target_bboxes_o2o_scaled = target_bboxes_o2o / stride_tensor
+        loss[0], loss[2] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes_o2o_scaled, target_scores_o2o,
                                           target_scores_sum_o2o, fg_mask_o2o)
-        loss_o2o_cls = self.bce(pred_scores, target_scores_o2o.to(dtype)).sum() / target_scores_sum_o2o
+        loss[1] = self.bce(pred_scores, target_scores_o2o.to(dtype)).sum() / target_scores_sum_o2o
 
-        # Combine Losses (Dual Assignment)
-        # We weight them equally (or you can tune this, e.g., 0.5 * o2m + 1.0 * o2o)
-        loss[0] += loss_o2o_box
-        loss[1] += loss_o2o_cls
-        loss[2] += loss_o2o_dfl
+        # One-to-Many (Auxiliary Signal - Rich Gradients)
+        if not self.student_only:
+            _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
+                pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+                anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
+
+            # Compute Loss for One-to-Many (The "Teacher" signal)
+            target_scores_sum = max(target_scores.sum(), 1)
+            target_bboxes /= stride_tensor
+            l_box, l_dfl = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
+                                              target_scores_sum, fg_mask)
+            l_cls = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum
+            
+            # Combine Losses (Dual Assignment)
+            loss[0] += l_box
+            loss[1] += l_cls
+            loss[2] += l_dfl
         
         # Apply Gains
         loss[0] *= self.hyp.box

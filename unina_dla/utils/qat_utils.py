@@ -42,10 +42,9 @@ def replace_modules_with_quant(module, parent_name=''):
         full_name = f"{parent_name}.{name}" if parent_name else name
         
         # --- FIX STARTS HERE ---
-        # Explicitly skip the entire Head module. 
-        # In UNINA_DLA, the head is named 'head'. 
-        # We check if 'head' is a parent component of the current module.
-        if "head" in full_name.split('.'):
+        # Only skip the final 1x1 projection layers (cls_preds and reg_preds).
+        # We quantize the preceding RepVGGBlocks in the head for performance.
+        if "preds" in full_name:
             #print(f"Skipping Sensitive Layer: {full_name} (Keeping FP16/FP32)")
             continue
         # --- FIX ENDS HERE ---

@@ -77,9 +77,9 @@ The red-teaming process dictates a hybrid architecture that synthesizes the stre
 
 * **Backbone:** **RepVGG-B0** is selected. Its structural re-parameterization capability allows it to train as a multi-branch residual network (improving convergence) but compile into a single-path stack of $3\\times3$ convolutions (optimizing DLA execution).1  
 * **Activation Policy:** A strict policy of **SiLU $\\to$ ReLU** replacement is enforced. ReLU is a single-cycle, zero-overhead operation on the DLA's SDP (Single Data Point) unit.  
-* **Head:** The **YOLOv10 "One-to-One"** head is integrated. By utilizing Consistent Dual Assignments during training, this head learns to output a sparse set of non-overlapping boxes. This eliminates the need for expensive NMS. The DLA outputs raw grid predictions which are decoded on the CPU (Zero-GPU-Overhead) using Zero-Copy memory mapping. Because the O2O head suppresses duplicates, this decoding is a simple thresholding and distribution-to-bbox conversion, avoiding the O(N^2) complexity of NMS.13
+* **Head:** The **YOLOv10 "One-to-One"** head is integrated. By utilizing Consistent Dual Assignments during training (and enforcing O2O-only during QAT), this head learns to output a sparse set of non-overlapping boxes. The DLA outputs raw grid predictions which are decoded on the CPU (Zero-GPU-Overhead). A Sigmoid activation is applied to classification outputs within the model graph, ensuring this work is offloaded to the DLA hardware. Decoding is then a simple thresholding and distribution-to-bbox conversion.13
 
-**Final Architecture: UNINA-DLA** = RepVGG-B0 Backbone (ReLU) + Rep-PAN Neck (ReLU) + YOLOv10 One-to-One Head (ReLU/Linear).
+**Final Architecture: UNINA-DLA** = RepVGG-B0 Backbone (ReLU) + Rep-PAN Neck (ReLU) + YOLOv10 One-to-One Head (ReLU/Sigmoid).
 
 ## **4\. UNINA-DLA Architecture Detail**
 
@@ -176,8 +176,8 @@ Deploying an INT8 model on DLA requires more than just a calibration step. RepVG
 
 The final detection head layers (the $1\\times1$ convolutions predicting box coordinates $dx, dy, w, h$) are extremely sensitive to quantization noise. A small error in the regression output can shift a cone by meters in the world frame.
 
-* **Strategy:** We explicitly exclude the final detection head layers from INT8 quantization in the QAT config to maintain FP16/FP32 precision for regression accuracy.
-* **Implementation:** In the QAT script, the `replace_modules_with_quant` function checks the module hierarchy. If a module belongs to the head (e.g., `model.head`), it skips the quantization injection. This "Mixed Precision" execution is natively supported by the DLA and ensures that the sensitive bounding box predictions are not degraded by INT8 quantization noise.1
+* **Strategy:** We exclude only the final prediction layers (`cls_preds`, `reg_preds`) from INT8 quantization to preserve FP16/FP32 precision for regression accuracy and Sigmoid activation range.
+* **Implementation:** The `replace_modules_with_quant` function quantizes the heavy RepVGGBlocks within the head to INT8, while skipping the 1x1 projection layers. This ensures maximum DLA throughput while maintaining localization precision.1
 
 ## **7\. Implementation Blueprint: MMYOLO and PyTorch**
 
@@ -366,6 +366,7 @@ public:
         cudaStreamSynchronize(stream);
 
         // Process RAW Planar Results on CPU
+        // Classification outputs are already Sigmoid-activated on DLA.
         process\_detections();
     }
 };
