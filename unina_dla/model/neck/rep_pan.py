@@ -37,10 +37,7 @@ class RepPAN(nn.Module):
         self.p4_fusion = RepVGGBlock(out_channels * 2, out_channels, deploy=deploy)
         
         # Upsample P4_fused + Concat with P3 -> Fuse
-        if c3 != out_channels:
-            self.reduce_p3 = RepVGGBlock(c3, out_channels, deploy=deploy)
-        else:
-            self.reduce_p3 = nn.Identity()
+        self.reduce_p3 = RepVGGBlock(c3, out_channels, deploy=deploy)
         
         self.p3_fusion = RepVGGBlock(out_channels * 2, out_channels, deploy=deploy)
         

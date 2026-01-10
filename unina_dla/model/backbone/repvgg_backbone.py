@@ -33,6 +33,9 @@ class RepVGGBackbone(nn.Module):
         # Stage 4: 1 block, 512 channels (P5)
         layer4 = self._make_layer(512, 1, stride=2, deploy=deploy)
         self.stages.append(layer4)
+        
+        # Define output channels for P3, P4, P5
+        self.out_channels = [128, 256, 512]
 
     def _make_layer(self, planes, num_blocks, stride, deploy):
         strides = [stride] + [1]*(num_blocks-1)
@@ -47,7 +50,11 @@ class RepVGGBackbone(nn.Module):
         outs = []
         for i, stage in enumerate(self.stages):
             x = stage(x)
-            # We want outputs from Stage 2 (P3), Stage 3 (P4), Stage 4 (P5)
+            # Input is P1 (Stem stride 2)
+            # i=0: Stage 1 (P2, Stride 4)
+            # i=1: Stage 2 (P3, Stride 8) -> Keep
+            # i=2: Stage 3 (P4, Stride 16) -> Keep
+            # i=3: Stage 4 (P5, Stride 32) -> Keep
             if i >= 1: 
                 outs.append(x)
         return outs # [P3, P4, P5]

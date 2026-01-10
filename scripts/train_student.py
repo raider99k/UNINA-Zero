@@ -42,8 +42,14 @@ def save_batch_image(batch, filename, names):
     imgs = batch['img'].numpy()  # [B, 3, H, W]
     targets = batch['cls']  # [N, 6] (batch_idx, cls, x, y, w, h)
     
-    # Take first image in batch
-    img = imgs[0].transpose(1, 2, 0)
+    # Find first image in batch that has targets, or default to 0
+    target_idx = 0
+    unique_indices = torch.unique(targets[:, 0])
+    if len(unique_indices) > 0:
+        target_idx = int(unique_indices[0].item())
+    
+    # Take selected image
+    img = imgs[target_idx].transpose(1, 2, 0)
     img = (img * 1.0).astype(np.uint8) # Ultralytics dataloader might give 0-255 uint8 or float
     # Ensure it's 0-255 uint8 for PIL
     if img.max() <= 1.0:
@@ -53,8 +59,8 @@ def save_batch_image(batch, filename, names):
     img_pil = Image.fromarray(img)
     draw = ImageDraw.Draw(img_pil)
     
-    # Filter targets for the first image
-    img_targets = targets[targets[:, 0] == 0]
+    # Filter targets for the selected image
+    img_targets = targets[targets[:, 0] == target_idx]
     
     for t in img_targets:
         cls_id = int(t[1])
@@ -136,8 +142,21 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
         if hasattr(head, 'cv3') and len(head.cv3) > i:
             hooks.append(head.cv3[i].register_forward_hook(get_activation(t_outputs['box'])))
     
-    # Initialize Student
-    student = UNINA_DLA(num_classes=data_cfg.get('nc', 4), deploy=False).to(device)
+    # SAFETY CHECK: Class Count
+    # Teacher might be trained on 5 classes (Background + 4 cones) but Student expected 4.
+    # We force Student to match Data Config to prevent shape mismatch in distillation.
+    nc_data = data_cfg.get('nc', 4)
+    print(f"Dataset Class Count: {nc_data}")
+    
+    if hasattr(teacher_model, 'nc'):
+        print(f"Teacher Class Count: {teacher_model.nc}")
+        if teacher_model.nc != nc_data:
+             print(f"WARNING: Teacher nc ({teacher_model.nc}) != Dataset nc ({nc_data}).")
+             print("This is acceptable if Teacher has BACKGROUND class and Student does not, but usually indicates config drift.")
+
+    # Initialize Student with Dataset's Class Count
+    student = UNINA_DLA(num_classes=nc_data, deploy=False).to(device)
+    print(f"Student initialized with {nc_data} classes.")
     student.train()
     
     # Init Adapters
@@ -202,7 +221,7 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
             l_logit = loss_logit(s_cls, t_outputs['cls'])
             l_dfl = loss_dfl(s_box, t_outputs['box'])
             
-            total_loss = 1.0 * l_sdf + 1.0 * l_logit + 0.5 * l_dfl
+            total_loss = args.lambda_sdf * l_sdf + args.lambda_logit * l_logit + args.lambda_dfl * l_dfl
             
             total_loss.backward()
             optimizer.step()
@@ -373,6 +392,9 @@ def main():
     parser.add_argument('--epochs_distill', type=int, default=100)
     parser.add_argument('--epochs_qat', type=int, default=10)
     parser.add_argument('--batch', type=int, default=32)
+    parser.add_argument('--lambda_sdf', type=float, default=1.0, help='Weight for SDF Loss')
+    parser.add_argument('--lambda_logit', type=float, default=1.0, help='Weight for Logit Loss')
+    parser.add_argument('--lambda_dfl', type=float, default=0.5, help='Weight for DFL Loss')
     parser.add_argument('--skip_distillation', action='store_true')
     parser.add_argument('--skip_qat', action='store_true')
     parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint')

@@ -24,15 +24,15 @@ imgsz: 640  # inference size (pixels)
 # Hardware-Aware Augmentations
 # We disable extensive color jittering for distillation to keep teacher/student feature distributions closer
 hsv_h: 0.015  # image HSV-Hue augmentation (fraction)
-hsv_s: 0.7  # image HSV-Saturation augmentation (fraction)
-hsv_v: 0.4  # image HSV-Value augmentation (fraction)
+hsv_s: 0.1  # REDUCED: image HSV-Saturation augmentation (fraction) - was 0.7
+hsv_v: 0.1  # REDUCED: image HSV-Value augmentation (fraction) - was 0.4
 degrees: 0.0  # image rotation (+/- deg)
 translate: 0.1  # image translation (+/- fraction)
-scale: 0.5  # image scale (+/- gain)
+scale: 0.2  # REDUCED: image scale (+/- gain) - was 0.5
 shear: 0.0  # image shear (+/- deg)
 perspective: 0.0  # image perspective (+/- fraction), range 0-0.001
 flipud: 0.0  # image flip up-down (probability)
 fliplr: 0.5  # image flip left-right (probability)
-mosaic: 1.0  # image mosaic (probability)
-mixup: 0.1  # image mixup (probability)
+mosaic: 0.2  # REDUCED: image mosaic (probability) - was 1.0 (Too strong for distillation matching)
+mixup: 0.0  # DISABLED: image mixup (probability) - was 0.1 (Harmful for feature matching)
 copy_paste: 0.0  # segment copy-paste (probability)

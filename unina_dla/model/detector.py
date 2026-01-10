@@ -13,7 +13,7 @@ class UNINA_DLA(nn.Module):
     Features:
     - 100% DLA-compatible operations
     - Structural re-parameterization for inference
-    - NMS-free detection output
+    - Pseudo-One-to-One (Requires NMS if trained with standard loss)
     - 4 Cone Classes: Blue, Yellow, Small Orange, Big Orange
     
     Args:
@@ -35,9 +35,11 @@ class UNINA_DLA(nn.Module):
         if hasattr(self.backbone, 'out_channels'):
             bb_channels = self.backbone.out_channels
         else:
-            # Fallback for backbones that don't expose channels property
-            # This assumes standard RepVGG-B0 as previously hardcoded
-            bb_channels = [256, 512, 512]
+            # Strict check: Backbones MUST expose their output channels
+            raise ValueError(
+                f"Backbone {type(self.backbone).__name__} does not have 'out_channels' attribute. "
+                "Please ensure the backbone is correctly initialized and exposes its output steps."
+            )
         
         # Neck
         self.neck = RepPAN(

@@ -4,9 +4,24 @@ from unina_dla.utils.box_ops import decode_bboxes, non_max_suppression
 from unina_dla.utils.metrics import UNINAMetrics
 from tqdm import tqdm
 
-def validate(model, dataloader, device, conf_thres=0.001, iou_thres=0.6, strides=[8, 16, 32], num_classes=1, names=None, save_dir=None):
+def validate(model, dataloader, device, conf_thres=0.001, iou_thres=0.6, strides=None, num_classes=1, names=None, save_dir=None):
     model.eval()
     
+    # Dynamic parameter logic
+    reg_max = 16 # Default
+    if hasattr(model, 'head'):
+        if hasattr(model.head, 'reg_max'):
+            reg_max = model.head.reg_max
+        if strides is None and hasattr(model.head, 'stride'): # use model stride if available and not overridden
+             strides = model.head.stride
+             if isinstance(strides, torch.Tensor):
+                 strides = strides.cpu().numpy().tolist()
+    
+    # Fallback/Safety
+    if strides is None:
+        strides = [8, 16, 32]
+        print("WARNING: Strides not found in model, using default [8, 16, 32]")
+        
     metrics = UNINAMetrics(num_classes=num_classes, names=names, save_dir=save_dir)
     
     # Validation Loop
@@ -79,7 +94,7 @@ def validate(model, dataloader, device, conf_thres=0.001, iou_thres=0.6, strides
             for i in range(len(strides)):
                  c = preds_cls[i].permute(0, 2, 3, 1).reshape(bs, -1, num_classes).sigmoid()
                  pred_cls.append(c)
-                 r = preds_reg[i].permute(0, 2, 3, 1).reshape(bs, -1, 4 * 16) # reg_max=16 hardcoded or pass it
+                 r = preds_reg[i].permute(0, 2, 3, 1).reshape(bs, -1, 4 * reg_max)
                  pred_reg.append(r)
                  
             pred_cls = torch.cat(pred_cls, 1)

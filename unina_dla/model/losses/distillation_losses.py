@@ -7,8 +7,10 @@ class SDFDistillationLoss(nn.Module):
     Vector 1: Scale-Decoupled Feature (SDF) Distillation.
     Includes spatial attention mask to focus on foreground objects.
     """
-    def __init__(self):
+    def __init__(self, mask_type='soft', threshold=0.4):
         super().__init__()
+        self.mask_type = mask_type
+        self.threshold = threshold
         
     def generate_attention_mask(self, teacher_feats):
         """
@@ -20,14 +22,30 @@ class SDFDistillationLoss(nn.Module):
             # simple magnitude attention
             # feat: [B, C, H, W]
             magnitude = torch.mean(torch.abs(feat), dim=1, keepdim=True) # [B, 1, H, W]
-            # Normalize to 0-1
-            m_min = magnitude.amin(dim=(2,3), keepdim=True)
-            m_max = magnitude.amax(dim=(2,3), keepdim=True)
-            norm_mag = (magnitude - m_min) / (m_max - m_min + 1e-6)
             
-            # Thresholding (e.g., maintain top 40% activations or just soft weight)
-            # Using soft mask for better gradient flow
-            masks.append(norm_mag)
+            # Robust Normalization (avoid outliers)
+            # Use 5th and 95th percentile to clamp
+            # Note: quantile might be slow on large batches/CPUs, but fine for GPU training
+            
+            # Flatten spatial dims for quantile
+            b, c, h, w = magnitude.shape
+            flat_mag = magnitude.view(b, c, -1)
+            
+            m_min = torch.quantile(flat_mag, 0.05, dim=2, keepdim=True).unsqueeze(-1)
+            m_max = torch.quantile(flat_mag, 0.95, dim=2, keepdim=True).unsqueeze(-1)
+            
+            # Clamp and Normalize
+            # Broadcast back to [B, 1, H, W]
+            magnitude_clamped = magnitude.clamp(min=m_min, max=m_max)
+            norm_mag = (magnitude_clamped - m_min) / (m_max - m_min + 1e-6)
+            
+            if self.mask_type == 'hard':
+                # Hard binary mask
+                mask = (norm_mag > self.threshold).float()
+                masks.append(mask)
+            else:
+                # Soft mask (default)
+                masks.append(norm_mag)
             
         return masks
 

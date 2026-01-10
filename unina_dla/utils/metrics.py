@@ -75,8 +75,10 @@ class UNINAMetrics:
                         # Simplified: Correct is [N, 10]
                         # matches_prediction logic from YOLOv5/v8:
                         # For each threshold, find best match.
-                        # This is too bulky to rewrite.
-                        pass
+                # Evaluate using custom matching logic
+                # We implement a greedy matching strategy in _process_batch which is distinct
+                # from the complex assignment often used, but effective and faster.
+                pass
 
                 # Fallback: if ultralytics is present, we might want to use its Validator?
                 # But we are Custom.

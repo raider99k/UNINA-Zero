@@ -54,6 +54,10 @@ def export_onnx(checkpoint, output, qat=False, num_classes=5):
             # Get split outputs from model head
             reg_outs, cls_outs = self.model(x)
             
+            # Determine dynamic shape for flatten
+            # reg_outs[0] is [B, 4*reg_max, H, W]
+            reg_ch = reg_outs[0].shape[1]
+            
             # Flatten and Concat for DLA Zero-Copy
             preds = []
             for reg, cls in zip(reg_outs, cls_outs):
@@ -63,7 +67,7 @@ def export_onnx(checkpoint, output, qat=False, num_classes=5):
                 cls = cls.permute(0, 2, 3, 1)
                 
                 b, h, w, _ = reg.shape
-                reg = reg.reshape(b, -1, 64)
+                reg = reg.reshape(b, -1, reg_ch)
                 cls = cls.reshape(b, -1, self.num_classes).sigmoid() # Apply sigmoid
                 
                 # Re-concat: [Box, Cls]
