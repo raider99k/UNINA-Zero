@@ -113,6 +113,46 @@ def plot_results(metrics, filename, title="Training Metrics"):
 # ============================================================================
 # PHASE 1: DISTILLATION
 # ============================================================================
+class YOLOv8LossAdapter:
+    """
+    Adapter to use YOLOv8/v10 loss logic with the custom UNINA_DLA model.
+    Mocks the expected Ultralytics model structure.
+    """
+    def __init__(self, real_model, cfg):
+        self.device = next(real_model.parameters()).device
+        
+        class MockHead:
+            def __init__(self, nc, reg_max, stride):
+                self.nc = nc
+                self.reg_max = reg_max
+                self.stride = torch.tensor(stride).to(real_model.parameters().__next__().device)
+                self.no = nc + reg_max * 4
+
+        class MockModel:
+            def __init__(self, args, head_attrs):
+                self.args = args
+                self.model = [MockHead(**head_attrs)]
+            def parameters(self):
+                return real_model.parameters()
+
+        head = real_model.head
+        head_attrs = {
+            'nc': head.num_classes, 
+            'reg_max': head.reg_max, 
+            'stride': [8., 16., 32.]
+        }
+        
+        self.mock_model = MockModel(cfg, head_attrs)
+        # v10DetectionLoss initializes self.proj using head.reg_max from MockModel
+        self.loss_fn = v10DetectionLoss(self.mock_model)
+
+    def __call__(self, preds, batch):
+        reg_outs, cls_outs = preds
+        # Merge reg and cls outputs for each scale to match loss function expectation
+        feats = [torch.cat([r, c], dim=1) for r, c in zip(reg_outs, cls_outs)]
+        return self.loss_fn(feats, batch)
+
+
 def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
     print("\n" + "="*60)
     print("PHASE 1: TRI-VECTOR KNOWLEDGE DISTILLATION")
@@ -205,7 +245,13 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
     # Losses
     loss_sdf = SDFDistillationLoss().to(device)
     loss_logit = LogitDistillationLoss(temperature=4.0).to(device)
+    loss_sdf = SDFDistillationLoss().to(device)
+    loss_logit = LogitDistillationLoss(temperature=4.0).to(device)
     loss_dfl = DFLDistillationLoss().to(device)
+    
+    # Task Loss (Ground Truth)
+    dataset_cfg = IterableSimpleNamespace(**DEFAULT_CFG.__dict__)
+    task_loss_fn = YOLOv8LossAdapter(student, dataset_cfg)
     
     best_map = 0.0
     best_ckpt_path = os.path.join(args.output_dir, 'best_distill.pth')
@@ -240,7 +286,11 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
             l_logit = loss_logit(s_cls, t_outputs['cls'])
             l_dfl = loss_dfl(s_box, t_outputs['box'])
             
-            total_loss = args.lambda_sdf * l_sdf + args.lambda_logit * l_logit + args.lambda_dfl * l_dfl
+            # Compute Task Loss (GT)
+            # student.head returns (reg, cls) - YOLOv8LossAdapter handles it
+            l_task, _ = task_loss_fn((s_box, s_cls), batch)
+            
+            total_loss = args.lambda_sdf * l_sdf + args.lambda_logit * l_logit + args.lambda_dfl * l_dfl + args.lambda_task * l_task
             
             total_loss.backward()
             optimizer.step()
@@ -287,44 +337,7 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
 # ============================================================================
 # PHASE 2: QAT
 # ============================================================================
-class YOLOv8LossAdapter:
-    """
-    Adapter to use YOLOv8/v10 loss logic with the custom UNINA_DLA model.
-    Mocks the expected Ultralytics model structure.
-    """
-    def __init__(self, real_model, cfg):
-        self.device = next(real_model.parameters()).device
-        
-        class MockHead:
-            def __init__(self, nc, reg_max, stride):
-                self.nc = nc
-                self.reg_max = reg_max
-                self.stride = torch.tensor(stride).to(real_model.parameters().__next__().device)
-                self.no = nc + reg_max * 4
 
-        class MockModel:
-            def __init__(self, args, head_attrs):
-                self.args = args
-                self.model = [MockHead(**head_attrs)]
-            def parameters(self):
-                return real_model.parameters()
-
-        head = real_model.head
-        head_attrs = {
-            'nc': head.num_classes, 
-            'reg_max': head.reg_max, 
-            'stride': [8., 16., 32.]
-        }
-        
-        self.mock_model = MockModel(cfg, head_attrs)
-        # v10DetectionLoss initializes self.proj using head.reg_max from MockModel
-        self.loss_fn = v10DetectionLoss(self.mock_model)
-
-    def __call__(self, preds, batch):
-        reg_outs, cls_outs = preds
-        # Merge reg and cls outputs for each scale to match loss function expectation
-        feats = [torch.cat([r, c], dim=1) for r, c in zip(reg_outs, cls_outs)]
-        return self.loss_fn(feats, batch)
 
 
 def run_qat(args, device, data_cfg, train_loader, distill_ckpt, writer):
@@ -450,6 +463,7 @@ def main():
     parser.add_argument('--lambda_sdf', type=float, default=1.0, help='Weight for SDF Loss')
     parser.add_argument('--lambda_logit', type=float, default=1.0, help='Weight for Logit Loss')
     parser.add_argument('--lambda_dfl', type=float, default=0.5, help='Weight for DFL Loss')
+    parser.add_argument('--lambda_task', type=float, default=1.0, help='Weight for Task Loss (Ground Truth)')
     parser.add_argument('--skip_distillation', action='store_true')
     parser.add_argument('--skip_qat', action='store_true')
     parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint')

@@ -136,30 +136,35 @@ The detection head removes the greatest source of latency variance: Non-Maximum 
 * **Consistent Dual Assignments:** During training, the model utilizes two heads. The **One-to-Many Head** uses standard YOLO assignment (multiple anchors per object) to provide rich gradient signals. The **One-to-One Head** uses Hungarian matching to assign a single best prediction per ground truth object.13  
 * **Inference determinism:** Only the One-to-One head is exported. Because it is trained to suppress duplicate boxes internally, the output is a sparse set of detections. This allows us to bypass the EfficientNMS TensorRT plugin (which typically runs on GPU/CPU) and let the DLA write the final detection tensor directly to memory.1
 
-## **5\. The "Tri-Vector" Distillation Strategy**
+### **5\. The "Tri-Vector" Distillation Strategy**
 
-Substituting RepVGG (for CSPNet) and ReLU (for SiLU) creates an accuracy deficit, particularly for small objects like racing cones. To bridge this gap, we employ a "Tri-Vector" distillation strategy using a **YOLOv10-X** (FP32, SiLU, CSPNet) as the Teacher.
+Substituting RepVGG (for CSPNet) and ReLU (for SiLU) creates an accuracy deficit, particularly for small objects like racing cones. To bridge this gap, we employ a **"Hybrid Tri-Vector" distillation** strategy using a **YOLOv10-X** (FP32, SiLU, CSPNet) as the Teacher, while simultaneously injecting **Ground Truth (Task) Loss** into the pipeline.
+
+The addition of Task Loss (Hungarian matching signal) is critical to acting as a "Reality Filter." Magnitude-based distillation is class-agnostic and can force the student to learn teacher hallucinations (e.g., skid marks, lens flares). The Task Loss ensures the student prioritizes features that lead to correct bounding box detections. [1]
 
 ### **5.1 Vector 1: Scale-Decoupled Feature (SDF) Distillation**
 
 Standard feature distillation fails for small objects because the loss function is dominated by the vast number of background pixels.
 
-* **ScaleKD Implementation:** We adopt Scale-Aware Knowledge Distillation (ScaleKD).3 This method decouples the teacher's features into scale-specific embeddings.  
-* Spatial Attention Mask: We generate a binary mask $M$ derived from the Teacher's high-confidence predictions. The feature loss $\\mathcal{L}\_{feat}$ is weighted by this mask:  
-  $$ \\mathcal{L}{feat} \= \\sum{l} | (F\_T^{(l)} \- \\phi(F\_S^{(l)})) \\odot M^{(l)} ||^2 $$  
-where $F\_T$ and $F\_S$ are teacher and student feature maps, and $\\phi$ is a $1\\times1$ convolution adapter to match channels. This mask forces the student to focus its limited capacity solely on the regions containing cones, effectively ignoring the asphalt and sky.1
+*   **ScaleKD & Spatial Normalization:** We adopt Scale-Aware Knowledge Distillation (ScaleKD). [3] This method decouples the teacher's features into scale-specific embeddings.
+*   **Global Mean Absolute Normalization:** To prevent the distillation loss from being dominated by global intensity differences between teacher and student activations, we apply spatial normalization:
+    $$ \hat{F} = \frac{F}{\mu(|F|) + \epsilon} $$
+    This decouples the "Scale" (intensity) from the "Spatial Pattern," forcing the student to learn the *topography* of the teacher's attention mask.
+*   **Spatial Attention Mask:** We generate a binary or soft mask $M$ derived from the Teacher's activation magnitude. The feature loss $\mathcal{L}_{feat}$ is weighted by this mask:
+    $$ \mathcal{L}_{feat} = \sum_{l} \| (\text{Norm}(\phi(F_S^{(l)})) - \text{Norm}(F_T^{(l)})) \odot M^{(l)} \|^2 $$
+    where $F_T$ and $F_S$ are teacher and student feature maps. This mask forces the student to focus its limited capacity solely on the regions containing cones. [1]
 
 ### **5.2 Vector 2: Logit-Based Response Distillation**
 
 We distill the classification logits using Kullback-Leibler (KL) Divergence with a high temperature ($T=4$).
 
-* **Robustness Transfer:** A "Yellow Cone" partially obscured by shadow might produce a teacher distribution of . A hard label would just be . Distilling the distribution transfers the teacher's uncertainty, teaching the student to be robust to lighting variations—a critical factor in outdoor racing.1
+*   **Robustness Transfer:** A "Yellow Cone" partially obscured by shadow might produce a teacher distribution of . A hard label would just be . Distilling the distribution transfers the teacher's uncertainty, teaching the student to be robust to lighting variations—a critical factor in outdoor racing.1
 
 ### **5.3 Vector 3: Bounding Box Uncertainty Distillation**
 
 YOLOv10 uses Distribution Focal Loss (DFL), which predicts a probability distribution for the bounding box boundaries rather than just a scalar coordinate. We distill this distribution.
 
-* **Localization Precision:** By mimicking the teacher's distribution of the box edges, the student learns the *spatial uncertainty* of the detection. To ensure mathematical correctness, the DFL distillation reshapes the [B, 64, H, W] tensors into [N, 4, 16] blocks, applying Softmax independently to each of the 4 coordinates. This is vital for the SLAM system, which can use this uncertainty to weight the landmarks in the map.1
+*   **Localization Precision:** By mimicking the teacher's distribution of the box edges, the student learns the *spatial uncertainty* of the detection. To ensure mathematical correctness, the DFL distillation reshapes the [B, 64, H, W] tensors into [N, 4, 16] blocks, applying Softmax independently to each of the 4 coordinates. This is vital for the SLAM system, which can use this uncertainty to weight the landmarks in the map.1
 
 ## **6\. Quantization Aware Training (QAT): The Precision Gauntlet**
 
@@ -167,119 +172,37 @@ Deploying an INT8 model on DLA requires more than just a calibration step. RepVG
 
 ### **6.1 The QAT Workflow**
 
-1. **FP32 Convergence:** Train the UNINA-DLA student to convergence using the Tri-Vector distillation.  
-2. **Structural Fusion:** Perform the RepVGG fusion (BN folding \+ branch merging) *before* inserting quantization nodes. This ensures the QAT process models the actual inference-time numerics.  
-3. **QAT Injection:** Insert QuantStub and DeQuantStub nodes. Replace nn.Conv2d and nn.ReLU with their quantized counterparts (quant\_nn.QuantConv2d, quant\_nn.QuantReLU) using the NVIDIA pytorch-quantization toolkit.22  
-4. **Entropy Calibration:** Use Entropy calibration for activations. Unlike Max calibration, which is sensitive to outliers, Entropy calibration minimizes the KL divergence between the FP32 and INT8 distributions, preserving the information content of small, low-magnitude cone activations.1  
-5. **Fine-Tuning:** Retrain the quantized model for \~10% of the original epochs with a low learning rate ($1e^{-5}$) to allow weights to adapt to the quantization noise (Simulated Quantization).
+1.  **FP32 Convergence:** Train the UNINA-DLA student to convergence using the Tri-Vector distillation.
+2.  **Structural Fusion:** Perform the RepVGG fusion (BN folding \+ branch merging) *before* inserting quantization nodes. This ensures the QAT process models the actual inference-time numerics.
+3.  **QAT Injection:** Insert QuantStub and DeQuantStub nodes. Replace nn.Conv2d and nn.ReLU with their quantized counterparts (quant\_nn.QuantConv2d, quant\_nn.QuantReLU) using the NVIDIA pytorch-quantization toolkit.22
+4.  **Entropy Calibration:** Use Entropy calibration for activations. Unlike Max calibration, which is sensitive to outliers, Entropy calibration minimizes the KL divergence between the FP32 and INT8 distributions, preserving the information content of small, low-magnitude cone activations.1
+5.  **Fine-Tuning:** Retrain the quantized model for \~10% of the original epochs with a low learning rate ($1e^{-5}$) to allow weights to adapt to the quantization noise (Simulated Quantization).
 
 ### **6.2 Sensitive Layer Exemption (Mixed Precision)**
 
 The final detection head layers (the $1\\times1$ convolutions predicting box coordinates $dx, dy, w, h$) are extremely sensitive to quantization noise. A small error in the regression output can shift a cone by meters in the world frame.
 
-* **Strategy:** We exclude only the final prediction layers (`cls_preds`, `reg_preds`) from INT8 quantization to preserve FP16/FP32 precision for regression accuracy and Sigmoid activation range.
-* **Implementation:** The `replace_modules_with_quant` function quantizes the heavy RepVGGBlocks within the head to INT8, while skipping the 1x1 projection layers. This ensures maximum DLA throughput while maintaining localization precision.1
+*   **Strategy:** We exclude only the final prediction layers (`cls_preds`, `reg_preds`) from INT8 quantization to preserve FP16/FP32 precision for regression accuracy and Sigmoid activation range.
+*   **Implementation:** The `replace_modules_with_quant` function quantizes the heavy RepVGGBlocks within the head to INT8, while skipping the 1x1 projection layers. This ensures maximum DLA throughput while maintaining localization precision.1
 
 ## **7\. Implementation Blueprint: MMYOLO and PyTorch**
 
-This section provides the precise configuration and code structures required to realize UNINA-DLA within the MMYOLO framework.
+### **7.3 Unified Training Pipeline (train_student.py)**
 
-### **7.1 Registering the Custom RepVGG-ReLU Backbone**
+The implementation integrates all phases into a single command-line interface.
 
-We must ensure that the RepVGG implementation strictly uses ReLU and allows for the export-time fusion.
+```bash
+# Phase 1: Distillation + Task Learning
+python scripts/train_student.py --teacher yolov10x.pt --data unina_dla_data.yaml --epochs_distill 100 --lambda_task 1.0
 
-Python
+# Phase 2: QAT Calibration & Fine-Tuning
+# Automatically follows Phase 1 or can be run standalone
+```
 
-\# mmyolo/models/backbones/repvgg\_dla.py  
-import torch.nn as nn  
-from mmyolo.registry import MODELS  
-from.base\_backbone import BaseBackbone  
-from mmcv.cnn import ConvModule
+**Loss Composition (Phase 1):**
+$$ \mathcal{L}_{total} = \lambda_{sdf} \mathcal{L}_{SDF} + \lambda_{logit} \mathcal{L}_{Logit} + \lambda_{dfl} \mathcal{L}_{DFL} + \lambda_{task} \mathcal{L}_{Task} $$
 
-@MODELS.register\_module()  
-class RepVGG\_DLA(BaseBackbone):  
-    """  
-    RepVGG Backbone optimized for NVDLA.  
-    Forces ReLU activations and supports deploy-time fusion.  
-    """  
-    def \_\_init\_\_(self, arch='B0', act\_cfg=dict(type\='ReLU', inplace=True), deploy=False, \*\*kwargs):  
-        super().\_\_init\_\_(\*\*kwargs)  
-        self.deploy \= deploy  
-        self.act\_cfg \= act\_cfg  
-        \# Define RepVGG stages (simplified for brevity)  
-        self.stages \= nn.ModuleList()  
-        \#......  
-          
-    def switch\_to\_deploy(self):  
-        if self.deploy:  
-            return  
-        for module in self.modules():  
-            if hasattr(module, 'switch\_to\_deploy'):  
-                module.switch\_to\_deploy()  
-        self.deploy \= True
-
-    def forward(self, x):  
-        outs \=  
-        for stage in self.stages:  
-            x \= stage(x)  
-            if stage\_index in self.out\_indices:  
-                outs.append(x)  
-        return tuple(outs)
-
-### **7.2 Configuration File (mmyolo/configs/unina_dla.py)**
-
-This configuration file assembles the pieces. Note the explicit act\_cfg and use\_one\_to\_one flags.
-
-Python
-
-\_base\_ \= \['../\_base\_/default\_runtime.py', '../\_base\_/schedules/schedule\_1x.py'\]
-
-\# Hardware-Aware Model Config  
-model \= dict(  
-    type\='YOLODetector',  
-    data\_preprocessor=dict(  
-        type\='YOLOv5DetDataPreprocessor',  
-        mean=, std=\[255\., 255\., 255\.\], bgr\_to\_rgb=True),  
-      
-    \# 1\. Backbone: RepVGG-B0 with ReLU  
-    backbone=dict(  
-        type\='RepVGG\_DLA',  
-        arch='B0',  
-        out\_indices=(2, 3, 4), \# P3, P4, P5  
-        act\_cfg=dict(type\='ReLU', inplace=True), \# STRICTLY ReLU for DLA  
-        deploy=False \# Set to True for export  
-    ),  
-      
-    \# 2\. Neck: Rep-PAN with ReLU  
-    neck=dict(  
-        type\='YOLOv6RepPAFPN', \# Rep-PAN implementation  
-        in\_channels=, \# RepVGG-B0 widths  
-        out\_channels=,  
-        num\_csp\_blocks=0, \# Disable CSP blocks to avoid split/merge friction  
-        act\_cfg=dict(type\='ReLU', inplace=True)  
-    ),  
-      
-    \# 3\. Head: YOLOv10 One-to-One  
-    bbox\_head=dict(  
-        type\='YOLOv10Head',  
-        head\_module=dict(  
-            type\='YOLOv10HeadModule',  
-            num\_classes=1, \# Only Cones  
-            in\_channels=,  
-            use\_one\_to\_one=True, \# Enable NMS-free export  
-            act\_cfg=dict(type\='ReLU', inplace=True)  
-        ),  
-        loss\_cls=dict(type\='mmdet.CrossEntropyLoss', use\_sigmoid=True, loss\_weight=1.0),  
-        loss\_bbox=dict(type\='mmdet.IoULoss', loss\_weight=2.5),  
-        loss\_dfl=dict(type\='mmdet.DistributionFocalLoss', loss\_weight=0.5)  
-    )  
-)
-
-\# 4\. Distillation Hook Configuration  
-custom\_hooks \=
-
-\# 5\. Fixed Resolution for DLA  
-train\_dataloader \= dict(batch\_size=16, dataset=dict(pipeline=))
+This hybrid objective ensures that the student preserves the "Recall" of the teacher while maintaining the "Precision" mandated by the Ground Truth labels.
 
 ## **8\. Deployment Strategy: TensorRT and Zero-Copy**
 

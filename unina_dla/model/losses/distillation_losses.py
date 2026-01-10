@@ -55,6 +55,16 @@ class SDFDistillationLoss(nn.Module):
             
         return masks
 
+    def normalize(self, x):
+        """
+        Normalize feature maps by global mean absolute value per sample.
+        Preserves relative responses between channels/spatial locations while decoupling global scale.
+        """
+        # x: [B, C, H, W]
+        # mean: [B, 1, 1, 1]
+        mean = x.abs().mean(dim=(1, 2, 3), keepdim=True)
+        return x / (mean + 1e-6)
+
     def forward(self, student_feats, teacher_feats, adapters):
         """
         Args:
@@ -71,9 +81,13 @@ class SDFDistillationLoss(nn.Module):
             # 1. Adapt student channels to match teacher
             s_adapted = adapter(s_feat)
             
-            # 2. Compute MSE weighted by mask
+            # 2. Normalize both to decouple scale
+            s_norm = self.normalize(s_adapted)
+            t_norm = self.normalize(t_feat)
+            
+            # 3. Compute MSE weighted by mask
             # mask is [B, 1, H, W], broadcast
-            diff = (s_adapted - t_feat)
+            diff = (s_norm - t_norm)
             weighted_diff = diff * mask
             
             loss += weighted_diff.pow(2).mean()
