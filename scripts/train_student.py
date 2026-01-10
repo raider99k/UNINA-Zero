@@ -294,6 +294,9 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
             # student.head returns (reg, cls) - YOLOv8LossAdapter handles it
             l_task, _ = task_loss_fn((s_box, s_cls), batch)
             
+            # FIX: Normalize Task Loss by batch size to match distillation magnitude
+            l_task = l_task / imgs.shape[0]
+            
             total_loss = args.lambda_sdf * l_sdf + args.lambda_logit * l_logit + args.lambda_dfl * l_dfl + args.lambda_task * l_task
             
             total_loss.backward()
