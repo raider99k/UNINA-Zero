@@ -42,42 +42,9 @@ def export_onnx(checkpoint, output, qat=False, num_classes=5):
         model.switch_to_deploy()
     
     # Enable Export Mode for Flattened Output
-    # User modified head to return tuple. We use a Wrapper to enforce DLA-friendly flattened output.
+    # We export RAW planar features [B, C, H, W] for DLA Zero-Copy
+    # DLAWrapper REMOVED to avoid GPU fallback
     
-    class DLAWrapper(torch.nn.Module):
-        def __init__(self, model, num_classes):
-            super().__init__()
-            self.model = model
-            self.num_classes = num_classes
-            
-        def forward(self, x):
-            # Get split outputs from model head
-            reg_outs, cls_outs = self.model(x)
-            
-            # Determine dynamic shape for flatten
-            # reg_outs[0] is [B, 4*reg_max, H, W]
-            reg_ch = reg_outs[0].shape[1]
-            
-            # Flatten and Concat for DLA Zero-Copy
-            preds = []
-            for reg, cls in zip(reg_outs, cls_outs):
-                # reg: [B, 64, H, W], cls: [B, NC, H, W]
-                # Permute to [B, H, W, C]
-                reg = reg.permute(0, 2, 3, 1)
-                cls = cls.permute(0, 2, 3, 1)
-                
-                b, h, w, _ = reg.shape
-                reg = reg.reshape(b, -1, reg_ch)
-                cls = cls.reshape(b, -1, self.num_classes).sigmoid() # Apply sigmoid
-                
-                # Re-concat: [Box, Cls]
-                preds.append(torch.cat([reg, cls], dim=-1))
-                
-            # [B, 8400, 64+NC]
-            return torch.cat(preds, dim=1)
-            
-    model = DLAWrapper(model, num_classes)
-        
     model.eval()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
@@ -86,14 +53,15 @@ def export_onnx(checkpoint, output, qat=False, num_classes=5):
     dummy_input = torch.randn(1, 3, 640, 640).to(device)
     
     # 4. Export
-    # The forward pass now returns a single tensor [B, 8400, 64+NC]
+    # The forward pass returns tuple of ((reg3, reg4, reg5), (cls3, cls4, cls5))
+    # We want to export these as separate outputs
     torch.onnx.export(
         model,
         dummy_input,
         output,
         opset_version=13,
         input_names=['images'],
-        output_names=['detections'], # Single output tensor
+        output_names=['reg3', 'reg4', 'reg5', 'cls3', 'cls4', 'cls5'], 
         dynamic_axes=None # STRICT STATIC SHAPES FOR DLA
     )
     

@@ -138,9 +138,9 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
         layer = teacher_model.model[idx]
         hooks.append(layer.register_forward_hook(get_activation(t_outputs['feats'])))
         if hasattr(head, 'cv2') and len(head.cv2) > i:
-            hooks.append(head.cv2[i].register_forward_hook(get_activation(t_outputs['cls'])))
+            hooks.append(head.cv2[i].register_forward_hook(get_activation(t_outputs['box'])))
         if hasattr(head, 'cv3') and len(head.cv3) > i:
-            hooks.append(head.cv3[i].register_forward_hook(get_activation(t_outputs['box'])))
+            hooks.append(head.cv3[i].register_forward_hook(get_activation(t_outputs['cls'])))
     
     # SAFETY CHECK: Class Count
     # Teacher might be trained on 5 classes (Background + 4 cones) but Student expected 4.
@@ -285,8 +285,12 @@ class YOLOv8LossAdapter:
                 return real_model.parameters()
         head = real_model.head
         head_attrs = {'nc': head.num_classes, 'reg_max': head.reg_max, 'stride': [8., 16., 32.]}
+from unina_dla.model.losses.v10_loss import v10DetectionLoss
+
+# ... 
+
         self.mock_model = MockModel(cfg, head_attrs)
-        self.loss_fn = v8DetectionLoss(self.mock_model)
+        self.loss_fn = v10DetectionLoss(self.mock_model)
 
     def __call__(self, preds, batch):
         reg_outs, cls_outs = preds

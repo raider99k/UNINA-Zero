@@ -325,62 +325,49 @@ C++
 
 using namespace nvinfer1;
 
-class UNINAPerception {  
-    IRuntime\* runtime;  
-    ICudaEngine\* engine;  
-    IExecutionContext\* context;  
-    void\* input\_cpu\_ptr;  
-    void\* input\_gpu\_ptr;  
-    void\* output\_cpu\_ptr;  
-    void\* output\_gpu\_ptr;  
+class UNINAPerception {
+    IRuntime\* runtime;
+    ICudaEngine\* engine;
+    IExecutionContext\* context;
+    void\* input\_cpu\_ptr;
+    void\* input\_gpu\_ptr;
+    // Pointers for 6 raw outputs (reg3, reg4, reg5, cls3, cls4, cls5)
+    void\* out\_ptrs\_cpu[6]; 
+    void\* out\_ptrs\_gpu[6];
     cudaStream\_t stream;
 
-public:  
-    void init(const char\* engine\_path) {  
-        // 1\. Load Engine  
-        //... (standard file reading code)...  
-        runtime \= createInferRuntime(gLogger);  
-        engine \= runtime-\>deserializeCudaEngine(engineData, engineSize);  
+public:
+    void init(const char\* engine\_path) {
+        runtime \= createInferRuntime(gLogger);
+        engine \= runtime-\>deserializeCudaEngine(engineData, engineSize);
         context \= engine-\>createExecutionContext();
 
-        // 2\. Allocate Zero-Copy Memory for Input  
-        // cudaHostAllocMapped: Maps CPU memory to GPU address space  
-        size\_t input\_size \= 1 \* 3 \* 640 \* 640 \* sizeof(half); // FP16 input  
-        cudaHostAlloc(\&input\_cpu\_ptr, input\_size, cudaHostAllocMapped);  
+        // 1. Input Allocation
+        size\_t input\_size \= 1 \* 3 \* 640 \* 640 \* sizeof(half);
+        cudaHostAlloc(\&input\_cpu\_ptr, input\_size, cudaHostAllocMapped);
         cudaHostGetDevicePointer(\&input\_gpu\_ptr, input\_cpu\_ptr, 0);
 
-        // 3\. Allocate Zero-Copy Memory for Output  
-        // YOLOv10 One-to-One output:  (300 boxes, x,y,w,h,conf,cls)  
-        size\_t output\_size \= 1 \* 300 \* 6 \* sizeof(float);  
-        cudaHostAlloc(\&output\_cpu\_ptr, output\_size, cudaHostAllocMapped);  
-        cudaHostGetDevicePointer(\&output\_gpu\_ptr, output\_cpu\_ptr, 0);  
-          
-        cudaStreamCreate(\&stream);  
+        // 2. Output Allocation (Example for reg3)
+        // Repeat for all 6 tensors to avoid GPU fallback
+        size\_t reg3\_size \= 1 \* 64 \* 80 \* 80 \* sizeof(float);
+        cudaHostAlloc(\&out\_ptrs\_cpu[0], reg3\_size, cudaHostAllocMapped);
+        cudaHostGetDevicePointer(\&out\_ptrs\_gpu[0], out\_ptrs\_cpu[0], 0);
+        
+        cudaStreamCreate(\&stream);
     }
 
-    void inference(void\* camera\_buffer) {  
-        // 4\. Zero-Copy Data "Transfer"  
-        // Instead of memcpy, we just pointer-cast or write directly to input\_cpu\_ptr.  
-        // Assuming camera driver writes to input\_cpu\_ptr directly (best case),  
-        // or we do a fast CPU-to-CPU copy (acceptable).  
-        memcpy(input\_cpu\_ptr, camera\_buffer, input\_size); // Optional if camera writes direct
+    void inference(void\* camera\_buffer) {
+        memcpy(input\_cpu\_ptr, camera\_buffer, input\_size); 
+        context-\>setTensorAddress("images", input\_gpu\_ptr);
+        context-\>setTensorAddress("reg3", out\_ptrs\_gpu[0]);
+        // ... set all 6 addresses ...
 
-        // 5\. Set Tensor Addresses  
-        context-\>setTensorAddress("images", input\_gpu\_ptr);  
-        context-\>setTensorAddress("output0", output\_gpu\_ptr);
-
-        // 6\. Enqueue Inference  
-        // The DLA reads directly from RAM via input\_gpu\_ptr  
         context-\>enqueueV3(stream);
-
-        // 7\. Synchronize  
-        // Wait for DLA to finish writing to output\_cpu\_ptr  
         cudaStreamSynchronize(stream);
 
-        // 8\. Process Results  
-        // CPU reads directly from output\_cpu\_ptr. No D2H copy needed.  
-        process\_detections((float\*)output\_cpu\_ptr);  
-    }  
+        // Process RAW Planar Results on CPU
+        process\_detections();
+    }
 };
 
 **Code Analysis:**
