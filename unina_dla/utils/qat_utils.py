@@ -36,16 +36,19 @@ def prepare_qat_model(model, per_channel_weights=True):
 def replace_modules_with_quant(module, parent_name=''):
     """
     Recursively replace Conv2d and ReLU with QuantConv2d and QuantReLU.
-    Skipping sensitive layers.
+    Crucially, EXCLUDES the entire detection head to maintain FP16 precision.
     """
     for name, child in module.named_children():
         full_name = f"{parent_name}.{name}" if parent_name else name
         
-        # SENSITIVE LAYER EXEMPTION
-        # Exclude the final detection head layers to keep them in FP16/FP32
-        if "cls_preds" in full_name or "reg_preds" in full_name:
-            # Skip final linear/conv projection layers (sensitive)
+        # --- FIX STARTS HERE ---
+        # Explicitly skip the entire Head module. 
+        # In UNINA_DLA, the head is named 'head'. 
+        # We check if 'head' is a parent component of the current module.
+        if "head" in full_name.split('.'):
+            #print(f"Skipping Sensitive Layer: {full_name} (Keeping FP16/FP32)")
             continue
+        # --- FIX ENDS HERE ---
             
         if isinstance(child, nn.Conv2d):
             new_module = quant_nn.QuantConv2d(
@@ -53,14 +56,14 @@ def replace_modules_with_quant(module, parent_name=''):
                 child.stride, child.padding, child.dilation, child.groups,
                 child.bias is not None
             )
-            # Copy weights
             new_module.weight.data = child.weight.data
             if child.bias is not None:
                 new_module.bias.data = child.bias.data
-            
-            # Replace
             setattr(module, name, new_module)
-            
+        elif isinstance(child, nn.ReLU):
+            # Also quantize ReLUs unless they are in the head
+            new_module = quant_nn.QuantReLU()
+            setattr(module, name, new_module)
         else:
             replace_modules_with_quant(child, full_name)
 

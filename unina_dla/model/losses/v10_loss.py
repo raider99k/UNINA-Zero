@@ -65,25 +65,29 @@ class v10DetectionLoss(v8DetectionLoss):
         # In a full v10 implementation, we would sum both losses.
         # For UNINA_DLA simplified student, we focus on the O2O signal to ensure NMS-free capability.
         
-        target_scores_sum = torch.max(target_scores_o2o, target_scores) # Combine for stability or just use O2O?
-        # Let's use strict O2O for the main branch to enforce sparseness
-        target_scores = target_scores_o2o
-        target_bboxes = target_bboxes_o2o
-        fg_mask = fg_mask_o2o
-
+        # Compute Loss for One-to-Many (The "Teacher" signal)
         target_scores_sum = max(target_scores.sum(), 1)
-
-        # Cls loss
+        target_bboxes /= stride_tensor
+        loss[0], loss[2] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
+                                          target_scores_sum, fg_mask)
         loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum
 
-        # Bbox loss
-        if fg_mask.sum():
-            target_bboxes /= stride_tensor
-            loss[0], loss[2] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
-                                              target_scores_sum, fg_mask)
+        # Compute Loss for One-to-One (The "Student" NMS-free signal)
+        target_scores_sum_o2o = max(target_scores_o2o.sum(), 1)
+        target_bboxes_o2o /= stride_tensor
+        loss_o2o_box, loss_o2o_dfl = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes_o2o, target_scores_o2o,
+                                          target_scores_sum_o2o, fg_mask_o2o)
+        loss_o2o_cls = self.bce(pred_scores, target_scores_o2o.to(dtype)).sum() / target_scores_sum_o2o
 
-        loss[0] *= self.hyp.box  # box gain
-        loss[1] *= self.hyp.cls  # cls gain
-        loss[2] *= self.hyp.dfl  # dfl gain
+        # Combine Losses (Dual Assignment)
+        # We weight them equally (or you can tune this, e.g., 0.5 * o2m + 1.0 * o2o)
+        loss[0] += loss_o2o_box
+        loss[1] += loss_o2o_cls
+        loss[2] += loss_o2o_dfl
+        
+        # Apply Gains
+        loss[0] *= self.hyp.box
+        loss[1] *= self.hyp.cls
+        loss[2] *= self.hyp.dfl
 
         return loss.sum() * batch_size, loss.detach()

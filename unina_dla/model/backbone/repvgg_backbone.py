@@ -6,9 +6,10 @@ class RepVGGBackbone(nn.Module):
     """
     RepVGG-B0 Backbone optimized for DLA (ReLU only).
     """
-    def __init__(self, deploy=False):
+    def __init__(self, deploy=False, out_indices=(1, 2, 3)):
         super().__init__()
         self.deploy = deploy
+        self.out_indices = out_indices
         
         # RepVGG-B0 config: [1, 2, 4, 14, 1] blocks
         # Widths: [64, 64, 128, 256, 512]
@@ -52,9 +53,9 @@ class RepVGGBackbone(nn.Module):
             x = stage(x)
             # self.stages contains [Stage1(P2), Stage2(P3), Stage3(P4), Stage4(P5)]
             # We want P3, P4, P5 -> indices 1, 2, 3
-            if i in [1, 2, 3]: 
+            if i in self.out_indices: 
                 outs.append(x)
-        return outs # [P3, P4, P5]
+        return outs
 
     def switch_to_deploy(self):
         self.deploy = True

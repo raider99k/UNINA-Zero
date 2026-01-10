@@ -77,7 +77,7 @@ The red-teaming process dictates a hybrid architecture that synthesizes the stre
 
 * **Backbone:** **RepVGG-B0** is selected. Its structural re-parameterization capability allows it to train as a multi-branch residual network (improving convergence) but compile into a single-path stack of $3\\times3$ convolutions (optimizing DLA execution).1  
 * **Activation Policy:** A strict policy of **SiLU $\\to$ ReLU** replacement is enforced. ReLU is a single-cycle, zero-overhead operation on the DLA's SDP (Single Data Point) unit.  
-* **Head:** The **YOLOv10 "One-to-One"** head is integrated. By utilizing Consistent Dual Assignments during training, this head learns to output a sparse set of non-overlapping boxes. This eliminates NMS entirely. The model output is a simple tensor (e.g., $N \\times 6$) that the DLA can write directly to memory, requiring no GPU post-processing.13
+* **Head:** The **YOLOv10 "One-to-One"** head is integrated. By utilizing Consistent Dual Assignments during training, this head learns to output a sparse set of non-overlapping boxes. This eliminates the need for expensive NMS. The DLA outputs raw grid predictions which are decoded on the CPU (Zero-GPU-Overhead). Because the O2O head suppresses duplicates, this decoding is a simple thresholding operation, avoiding the O(N^2) complexity of NMS.
 
 **Final Architecture: UNINA-DLA** = RepVGG-B0 Backbone (ReLU) + Rep-PAN Neck (ReLU) + YOLOv10 One-to-One Head (ReLU/Linear).
 
@@ -176,8 +176,8 @@ Deploying an INT8 model on DLA requires more than just a calibration step. RepVG
 
 The final detection head layers (the $1\\times1$ convolutions predicting box coordinates $dx, dy, w, h$) are extremely sensitive to quantization noise. A small error in the regression output can shift a cone by meters in the world frame.
 
-* **Strategy:** We explicitly exclude the final detection head layers from INT8 quantization in the QAT config.  
-* **Implementation:** In the QAT script, check the module names. If a module belongs to the head (e.g., model.bbox\_head), skip the quantization injection. The DLA supports mixed precision; it will run the backbone in INT8 and switch to FP16 for the head, providing the optimal balance of throughput and precision.1
+* **Strategy:** We quantize the detection heads to ensure 100% DLA residency.
+* **Implementation:** Previous strategies exempted these layers, but this caused implicit data formatting and potential GPU fallbacks. By quantizing the heads, we ensure the entire graph runs on the DLA, accepting the minor precision loss for guaranteed latency determinism.
 
 ## **7\. Implementation Blueprint: MMYOLO and PyTorch**
 

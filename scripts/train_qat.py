@@ -7,6 +7,7 @@ from ultralytics.data import build_yolo_dataset, build_dataloader
 from ultralytics.data.utils import check_det_dataset
 from ultralytics.utils import DEFAULT_CFG, IterableSimpleNamespace
 from ultralytics.utils.loss import v8DetectionLoss
+from unina_dla.model.losses.v10_loss import v10DetectionLoss
 import argparse
 import yaml
 import os
@@ -50,7 +51,7 @@ class YOLOv8LossAdapter:
         # We need to make sure cfg contains box, cls, dfl gains
         # DEFAULT_CFG should have them.
         self.mock_model = MockModel(cfg, head_attrs)
-        self.loss_fn = v8DetectionLoss(self.mock_model)
+        self.loss_fn = v10DetectionLoss(self.mock_model)
 
     def __call__(self, preds, batch):
         """
