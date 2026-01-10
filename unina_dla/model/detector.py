@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from unina_dla.model.backbone.repvgg import RepVGG_B0
+from unina_dla.model.backbone.repvgg_backbone import RepVGGBackbone as RepVGG_B0
 from unina_dla.model.neck.rep_pan import RepPAN
 from unina_dla.model.head.yolov10_head import YOLOv10Head
 

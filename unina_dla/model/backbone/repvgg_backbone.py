@@ -50,12 +50,9 @@ class RepVGGBackbone(nn.Module):
         outs = []
         for i, stage in enumerate(self.stages):
             x = stage(x)
-            # Input is P1 (Stem stride 2)
-            # i=0: Stage 1 (P2, Stride 4)
-            # i=1: Stage 2 (P3, Stride 8) -> Keep
-            # i=2: Stage 3 (P4, Stride 16) -> Keep
-            # i=3: Stage 4 (P5, Stride 32) -> Keep
-            if i >= 1: 
+            # self.stages contains [Stage1(P2), Stage2(P3), Stage3(P4), Stage4(P5)]
+            # We want P3, P4, P5 -> indices 1, 2, 3
+            if i in [1, 2, 3]: 
                 outs.append(x)
         return outs # [P3, P4, P5]
 

@@ -43,8 +43,8 @@ def replace_modules_with_quant(module, parent_name=''):
         
         # SENSITIVE LAYER EXEMPTION
         # Exclude the final detection head layers to keep them in FP16/FP32
-        if "head" in full_name:
-            # print(f"Keeping sensitive layer in FP16: {full_name}")
+        if "cls_preds" in full_name or "reg_preds" in full_name:
+            # Skip final linear/conv projection layers (sensitive)
             continue
             
         if isinstance(child, nn.Conv2d):

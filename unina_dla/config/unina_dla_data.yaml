@@ -8,14 +8,13 @@ test: images/test # test images (optional)
 
 # Classes
 names:
-  0: BACKGROUND
-  1: big_orange_cone
+  0: big_orange_cone
+  1: little_orange_cone
   2: blue_cone
-  3: little_orange_cone
-  4: yellow_cone
+  3: yellow_cone
 
 # Number of classes
-nc: 5
+nc: 4
 
 # DLA Requirements - Static Shapes
 # Unlike standard YOLO, we MUST enforce strict resizing to avoid DLA dynamic shape errors

@@ -51,7 +51,7 @@ class UNINA_DLA(nn.Module):
         
 if __name__ == "__main__":
     # Smoke test
-    model = UNINA_DLA(num_classes=5, deploy=False)
+    model = UNINA_DLA(num_classes=4, deploy=False)
     dummy_input = torch.randn(1, 3, 640, 640)
     output = model(dummy_input)
     print("Training Output shapes:")
