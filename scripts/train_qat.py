@@ -102,7 +102,12 @@ def train_qat(checkpoint_path, data_yaml, epochs=30, batch_size=16):
     
     # 3. Prepare for QAT
     # This fuses RepVGG and replaces layers with QuantModules
+    # This fuses RepVGG and replaces layers with QuantModules
     model = prepare_qat_model(model)
+    
+    # FIX: Disable deploy flag to return logits for training (Prevents "Double Sigmoid" in BCEWithLogitsLoss)
+    model.deploy = False
+    
     model.to(device)
     
     # 4. Calibration
