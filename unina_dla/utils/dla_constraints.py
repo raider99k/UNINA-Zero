@@ -35,16 +35,23 @@ def validate_dla_compatibility(model: nn.Module):
             if k > DLA_MAX_POOL_SIZE:
                 errors.append(f"Pooling kernel {k} > {DLA_MAX_POOL_SIZE} at {name}. DLA HW constraint.")
                 
-        # Check CBUF (Heuristic)
+        # Check weight volume against CBUF (1MB)
         if isinstance(module, nn.Conv2d):
-            # Check input/output channels
             c_in = module.in_channels
             c_out = module.out_channels
-            k = module.kernel_size[0] if isinstance(module.kernel_size, tuple) else module.kernel_size
+            groups = module.groups
+            k = module.kernel_size if isinstance(module.kernel_size, tuple) else (module.kernel_size, module.kernel_size)
             
-            # Very rough heuristic: if 3x3 and channels > 512, might thrash
-            if k >= 3 and (c_in > DLA_CBUF_SAFE_CHANNELS or c_out > DLA_CBUF_SAFE_CHANNELS):
-                warnings.append(f"High channel count ({c_in}->{c_out}) at {name}. May exceed CBUF (1MB) and thrash.")
+            # Calculate weight size in bytes (INT8 assumed for DLA)
+            # Size = (C_in / groups) * C_out * k_h * k_w
+            weight_size = (c_in // groups) * c_out * k[0] * k[1]
+            
+            if weight_size > 1_000_000:
+                errors.append(f"Weight volume {weight_size/1e6:.2f}MB > 1MB at {name}. "
+                             f"This WILL cause memory thrashing on DLA. Use higher groups or fewer channels.")
+            elif weight_size > 800_000:
+                warnings.append(f"Weight volume {weight_size/1e6:.2f}MB is close to 1MB CBUF limit at {name}. "
+                                "High risk of performance degradation.")
 
     return {
         'compatible': len(errors) == 0,

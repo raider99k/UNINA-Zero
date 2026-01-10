@@ -26,6 +26,11 @@ from unina_dla.model.teacher_model import get_teacher_model
 from unina_dla.model.losses.distillation_losses import SDFDistillationLoss, LogitDistillationLoss, DFLDistillationLoss
 from unina_dla.utils.validator import validate
 from unina_dla.utils.qat_utils import prepare_qat_model, enable_calibration, enable_quantization
+from unina_dla.model.losses.v10_loss import v10DetectionLoss
+try:
+    from pytorch_quantization import nn as quant_nn
+except ImportError:
+    quant_nn = None
 
 from ultralytics.data import build_yolo_dataset, build_dataloader
 from ultralytics.data.utils import check_det_dataset
@@ -283,31 +288,41 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
 # PHASE 2: QAT
 # ============================================================================
 class YOLOv8LossAdapter:
+    """
+    Adapter to use YOLOv8/v10 loss logic with the custom UNINA_DLA model.
+    Mocks the expected Ultralytics model structure.
+    """
     def __init__(self, real_model, cfg):
         self.device = next(real_model.parameters()).device
+        
         class MockHead:
             def __init__(self, nc, reg_max, stride):
                 self.nc = nc
                 self.reg_max = reg_max
                 self.stride = torch.tensor(stride).to(real_model.parameters().__next__().device)
                 self.no = nc + reg_max * 4
+
         class MockModel:
             def __init__(self, args, head_attrs):
                 self.args = args
                 self.model = [MockHead(**head_attrs)]
             def parameters(self):
                 return real_model.parameters()
+
         head = real_model.head
-        head_attrs = {'nc': head.num_classes, 'reg_max': head.reg_max, 'stride': [8., 16., 32.]}
-from unina_dla.model.losses.v10_loss import v10DetectionLoss
-
-# ... 
-
+        head_attrs = {
+            'nc': head.num_classes, 
+            'reg_max': head.reg_max, 
+            'stride': [8., 16., 32.]
+        }
+        
         self.mock_model = MockModel(cfg, head_attrs)
+        # v10DetectionLoss initializes self.proj using head.reg_max from MockModel
         self.loss_fn = v10DetectionLoss(self.mock_model)
 
     def __call__(self, preds, batch):
         reg_outs, cls_outs = preds
+        # Merge reg and cls outputs for each scale to match loss function expectation
         feats = [torch.cat([r, c], dim=1) for r, c in zip(reg_outs, cls_outs)]
         return self.loss_fn(feats, batch)
 
@@ -345,8 +360,14 @@ def run_qat(args, device, data_cfg, train_loader, distill_ckpt, writer):
     loss_adapter = YOLOv8LossAdapter(model, dataset_cfg)
     # QAT Optimizer with smart grouping
     g_weights, g_biases, g_bns = [], [], []
+    
+    # Define valid weight-bearing modules
+    weight_modules = (nn.Conv2d, nn.Linear)
+    if quant_nn is not None:
+        weight_modules += (quant_nn.QuantConv2d, quant_nn.QuantLinear)
+        
     for m in model.modules():
-        if isinstance(m, (nn.Conv2d, nn.Linear, quant_nn.QuantConv2d, quant_nn.QuantLinear)):
+        if isinstance(m, weight_modules):
             if hasattr(m, 'weight') and m.weight is not None:
                 g_weights.append(m.weight)
             if hasattr(m, 'bias') and m.bias is not None:
