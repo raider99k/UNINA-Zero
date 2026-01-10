@@ -115,12 +115,15 @@ class DFLDistillationLoss(nn.Module):
         for s_dfl, t_dfl in zip(student_dfl, teacher_dfl):
             # s_dfl: [B, 4*RegMax, H, W]
             b, c, h, w = s_dfl.shape
-            s_flat = s_dfl.permute(0, 2, 3, 1).contiguous().view(-1, c)
-            t_flat = t_dfl.permute(0, 2, 3, 1).contiguous().view(-1, c)
+            # Correct DFL distillation: separate 4 coordinates
+            # s_dfl: [B, 4*RegMax, h, w] -> reshape to [B, 4, RegMax, h, w]
+            reg_max = c // 4
+            s_split = s_dfl.view(b, 4, reg_max, h, w).permute(0, 3, 4, 1, 2).reshape(-1, 4, reg_max)
+            t_split = t_dfl.view(b, 4, reg_max, h, w).permute(0, 3, 4, 1, 2).reshape(-1, 4, reg_max)
             
             loss += F.kl_div(
-                F.log_softmax(s_flat, dim=-1),
-                F.softmax(t_flat, dim=-1),
+                F.log_softmax(s_split, dim=-1),
+                F.softmax(t_split, dim=-1),
                 reduction='batchmean'
             )
             count += 1

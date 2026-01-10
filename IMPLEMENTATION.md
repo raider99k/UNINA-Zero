@@ -126,7 +126,8 @@ This results in a single operation $M^{(2)} \= \\text{ReLU}(M^{(1)} \* W\_{final
 Standard YOLO necks (PANet) rely heavily on element-wise additions to merge features from different scales. As established, element-wise ops are bandwidth-inefficient on DLA.
 
 * **Rep-PAN Strategy:** We employ a re-parameterizable PANet.1 Similar to the backbone, the fusion blocks in the neck are trained as multi-branch structures but fused into single convolutions for inference.  
-* **Concatenation Preference:** Where possible, we prioritize concatenation over addition. The DLA's concatenation engine is generally more efficient than its element-wise engine because it involves simple memory addressing rather than arithmetic fetching. The Rep-PAN ensures that after concatenation, the subsequent processing is done via dense convolutions that fully utilize the hardware.17
+* **Concatenation Preference:** Where possible, we prioritize concatenation over addition. The DLA's concatenation engine is generally more efficient than its element-wise engine because it involves simple memory addressing rather than arithmetic fetching. The Rep-PAN ensures that after concatenation, the subsequent processing is done via dense convolutions that fully utilize the hardware.
+* **CBUF Optimization:** In fusion layers where input channels reach 512, we utilize **Grouped Convolutions (groups=2)**. This reduces the weight volume from 1.125 MB to \~0.56 MB, ensuring the operation fits entirely within the 1 MiB DLA Convolution Buffer (CBUF), eliminating memory thrashing and maximizing throughput.17
 
 ### **4.3 Head: YOLOv10 One-to-One (NMS-Free)**
 
@@ -158,7 +159,7 @@ We distill the classification logits using Kullback-Leibler (KL) Divergence with
 
 YOLOv10 uses Distribution Focal Loss (DFL), which predicts a probability distribution for the bounding box boundaries rather than just a scalar coordinate. We distill this distribution.
 
-* **Localization Precision:** By mimicking the teacher's distribution of the box edges, the student learns the *spatial uncertainty* of the detection. This is vital for the SLAM system, which can use this uncertainty to weight the landmarks in the map.1
+* **Localization Precision:** By mimicking the teacher's distribution of the box edges, the student learns the *spatial uncertainty* of the detection. To ensure mathematical correctness, the DFL distillation reshapes the [B, 64, H, W] tensors into [N, 4, 16] blocks, applying Softmax independently to each of the 4 coordinates. This is vital for the SLAM system, which can use this uncertainty to weight the landmarks in the map.1
 
 ## **6\. Quantization Aware Training (QAT): The Precision Gauntlet**
 

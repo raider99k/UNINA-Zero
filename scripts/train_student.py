@@ -176,11 +176,25 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
         nn.Conv2d(s, t, 1).to(device) for s, t in zip(s_channels, t_channels)
     ])
     
-    # Optimizer
-    optimizer = optim.AdamW(
-        list(student.parameters()) + list(adapters.parameters()),
-        lr=0.001, weight_decay=0.0005
-    )
+    # Optimizer with smart parameter grouping
+    # Group 0: Weights (with decay)
+    # Group 1: Biases (no decay)
+    # Group 2: BN/Normalization (no decay)
+    g_weights, g_biases, g_bns = [], [], []
+    for m in list(student.modules()) + list(adapters.modules()):
+        if isinstance(m, (nn.Conv2d, nn.Linear)):
+            g_weights.append(m.weight)
+            if m.bias is not None:
+                g_biases.append(m.bias)
+        elif isinstance(m, nn.BatchNorm2d):
+            g_bns.append(m.weight)
+            g_bns.append(m.bias)
+            
+    optimizer = optim.AdamW([
+        {'params': g_weights, 'weight_decay': 0.0005},
+        {'params': g_biases, 'weight_decay': 0.0},
+        {'params': g_bns, 'weight_decay': 0.0}
+    ], lr=0.001)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs_distill)
     
     # Losses
@@ -329,7 +343,23 @@ def run_qat(args, device, data_cfg, train_loader, distill_ckpt, writer):
     
     dataset_cfg = IterableSimpleNamespace(**DEFAULT_CFG.__dict__)
     loss_adapter = YOLOv8LossAdapter(model, dataset_cfg)
-    optimizer = optim.AdamW(model.parameters(), lr=1e-5)
+    # QAT Optimizer with smart grouping
+    g_weights, g_biases, g_bns = [], [], []
+    for m in model.modules():
+        if isinstance(m, (nn.Conv2d, nn.Linear, quant_nn.QuantConv2d, quant_nn.QuantLinear)):
+            if hasattr(m, 'weight') and m.weight is not None:
+                g_weights.append(m.weight)
+            if hasattr(m, 'bias') and m.bias is not None:
+                g_biases.append(m.bias)
+        elif isinstance(m, nn.BatchNorm2d):
+            if m.weight is not None: g_bns.append(m.weight)
+            if m.bias is not None: g_bns.append(m.bias)
+
+    optimizer = optim.AdamW([
+        {'params': g_weights, 'weight_decay': 0.0005},
+        {'params': g_biases, 'weight_decay': 0.0},
+        {'params': g_bns, 'weight_decay': 0.0}
+    ], lr=1e-5)
     
     qat_ckpt_path = os.path.join(args.output_dir, 'qat_final.pth')
     history = {'loss': [], 'map': []}

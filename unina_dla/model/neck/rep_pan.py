@@ -34,25 +34,26 @@ class RepPAN(nn.Module):
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
         
         # After concat: out_channels (from P5 up) + out_channels (from P4) = 2*out_channels
-        self.p4_fusion = RepVGGBlock(out_channels * 2, out_channels, deploy=deploy)
+        # we use groups=2 to keep weights under 1MB CBUF limit (512->256 INT8 is ~1.1MB)
+        self.p4_fusion = RepVGGBlock(out_channels * 2, out_channels, groups=2, deploy=deploy)
         
         # Upsample P4_fused + Concat with P3 -> Fuse
         self.reduce_p3 = RepVGGBlock(c3, out_channels, deploy=deploy)
         
-        self.p3_fusion = RepVGGBlock(out_channels * 2, out_channels, deploy=deploy)
+        self.p3_fusion = RepVGGBlock(out_channels * 2, out_channels, groups=2, deploy=deploy)
         
         # Bottom-up pathway
         # P3_out (out_channels) -> Downsample -> Concat P4_fused -> Fuse
         self.downsample_p3 = RepVGGBlock(out_channels, out_channels, stride=2, deploy=deploy)
         
         # Concat: P3_down (out) + P4_fusion (out) = 2*out
-        self.n3_fusion = RepVGGBlock(out_channels * 2, out_channels, deploy=deploy)
+        self.n3_fusion = RepVGGBlock(out_channels * 2, out_channels, groups=2, deploy=deploy)
         
         # P4_out -> Downsample -> Concat P5_reduced -> Fuse
         self.downsample_p4 = RepVGGBlock(out_channels, out_channels, stride=2, deploy=deploy)
         
         # Concat: P4_down (out) + P5_reduced (out) = 2*out
-        self.n4_fusion = RepVGGBlock(out_channels * 2, out_channels, deploy=deploy) # P5 output
+        self.n4_fusion = RepVGGBlock(out_channels * 2, out_channels, groups=2, deploy=deploy) # P5 output
         
     def forward(self, inputs):
         # inputs: [P3, P4, P5]
