@@ -32,17 +32,18 @@ class RepVGGBackbone(nn.Module):
         self.stages.append(layer3)
         
         # Stage 4: 1 block, 512 channels (P5)
-        layer4 = self._make_layer(512, 1, stride=2, deploy=deploy)
+        # CRITICAL: Use groups=2 to keep weights under 1MB CBUF limit (1.18MB -> 0.59MB)
+        layer4 = self._make_layer(512, 1, stride=2, deploy=deploy, groups=2)
         self.stages.append(layer4)
         
         # Define output channels for P3, P4, P5
         self.out_channels = [128, 256, 512]
 
-    def _make_layer(self, planes, num_blocks, stride, deploy):
+    def _make_layer(self, planes, num_blocks, stride, deploy, groups=1):
         strides = [stride] + [1]*(num_blocks-1)
         layers = []
         for stride in strides:
-            layers.append(RepVGGBlock(self.in_planes, planes, stride=stride, deploy=deploy))
+            layers.append(RepVGGBlock(self.in_planes, planes, stride=stride, deploy=deploy, groups=groups))
             self.in_planes = planes
         return nn.Sequential(*layers)
 

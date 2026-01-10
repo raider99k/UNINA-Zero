@@ -144,7 +144,8 @@ class YOLOv8LossAdapter:
         
         self.mock_model = MockModel(cfg, head_attrs)
         # v10DetectionLoss initializes self.proj using head.reg_max from MockModel
-        self.loss_fn = v10DetectionLoss(self.mock_model)
+        # CRITICAL: Force student_only=True (O2O) to resolve Dual Assignment conflict on Single Head
+        self.loss_fn = v10DetectionLoss(self.mock_model, student_only=True)
 
     def __call__(self, preds, batch):
         reg_outs, cls_outs = preds

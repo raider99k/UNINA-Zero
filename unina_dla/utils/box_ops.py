@@ -115,7 +115,8 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, max_det=300
             continue
             
         # Compute conf
-        x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
+        # CRITICAL: Removed redundant multiplication for Anchor-Free (No Objectness)
+        # x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
         
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = x[:, :4]
