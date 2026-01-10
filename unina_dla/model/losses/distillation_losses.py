@@ -37,7 +37,13 @@ class SDFDistillationLoss(nn.Module):
             # Clamp and Normalize
             # Broadcast back to [B, 1, H, W]
             magnitude_clamped = magnitude.clamp(min=m_min, max=m_max)
-            norm_mag = (magnitude_clamped - m_min) / (m_max - m_min + 1e-6)
+            diff = m_max - m_min
+            norm_mag = (magnitude_clamped - m_min) / (diff + 1e-6)
+            
+            # If the range is extremely small, the mask should likely be zero or 
+            # we should avoid multiplying by trash. 
+            # We can zero out norm_mag where diff is very small.
+            norm_mag = torch.where(diff > 1e-5, norm_mag, torch.zeros_like(norm_mag))
             
             if self.mask_type == 'hard':
                 # Hard binary mask

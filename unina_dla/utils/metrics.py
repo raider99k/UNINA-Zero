@@ -112,21 +112,21 @@ class UNINAMetrics:
         if x[0].shape[0]:
             matches = torch.cat((torch.stack(x, 1), iou[x[0], x[1]][:, None]), 1).cpu().numpy()
             if x[0].shape[0] > 1:
-            # Correct sorting: matches are (gt_idx, pred_idx, iou)
-            # We must prioritize high-confidence predictions first to prevent matching theft.
-            # Get confidence for each prediction index in matches
-            confidences = detections[matches[:, 1].astype(int), 4].cpu().numpy()
-            
-            # Sort by Confidence (desc) then IoU (desc)
-            # lexicographical sort in numpy: sort by iou, then by confidence
-            # np.lexsort takes (keys to sort by) -> first key is primary sort (low to high)
-            # We want high to low, so we use negative.
-            sort_indices = np.lexsort((-matches[:, 2], -confidences))
-            matches = matches[sort_indices]
+                # Correct sorting: matches are (gt_idx, pred_idx, iou)
+                # We must prioritize high-confidence predictions first to prevent matching theft.
+                # Get confidence for each prediction index in matches
+                confidences = detections[matches[:, 1].astype(int), 4].cpu().numpy()
+                
+                # Sort by Confidence (desc) then IoU (desc)
+                # lexicographical sort in numpy: sort by iou, then by confidence
+                # np.lexsort takes (keys to sort by) -> first key is primary sort (low to high)
+                # We want high to low, so we use negative.
+                sort_indices = np.lexsort((-matches[:, 2], -confidences))
+                matches = matches[sort_indices]
 
-            # Greedy match: highest rank (conf then iou) gets priority
-            matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
-            matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+                # Greedy match: highest rank (conf then iou) gets priority
+                matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+                matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
             
             matches = torch.from_numpy(matches).to(detections.device)
             

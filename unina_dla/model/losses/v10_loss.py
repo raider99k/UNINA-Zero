@@ -25,7 +25,11 @@ class v10DetectionLoss(v8DetectionLoss):
         # We need to adapt input if it comes from our UNINA_DLA which returns tuple
         
         loss = torch.zeros(3, device=self.device)  # box, cls, dfl
-        feats = preds[1] if isinstance(preds, tuple) else preds
+        if isinstance(preds, tuple):
+            # Combined reg and cls per scale: [B, 4*reg_max + nc, H, W]
+            feats = [torch.cat([r, c], 1) for r, c in zip(preds[0], preds[1])]
+        else:
+            feats = preds
         
         # ... logic to extract feats ...
         # Assume feats is the list of concatenated [reg+cls] per scale
