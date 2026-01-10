@@ -245,8 +245,6 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
     # Losses
     loss_sdf = SDFDistillationLoss().to(device)
     loss_logit = LogitDistillationLoss(temperature=4.0).to(device)
-    loss_sdf = SDFDistillationLoss().to(device)
-    loss_logit = LogitDistillationLoss(temperature=4.0).to(device)
     loss_dfl = DFLDistillationLoss().to(device)
     
     # Task Loss (Ground Truth)
