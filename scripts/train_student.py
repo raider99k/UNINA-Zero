@@ -178,6 +178,11 @@ def run_distillation(args, device, data_cfg, train_loader, val_loader, writer):
 
     head = teacher_model.model[-1]
     head_from = head.f
+    
+    # INDAGINE: Verify Teacher Head Structure
+    print(f"Teacher Head Type: {type(head)}")
+    print(f"Teacher Head Attributes: {[a for a in dir(head) if not a.startswith('_')]}")
+    
     hooks = []
     for i, idx in enumerate(head_from):
         layer = teacher_model.model[idx]
