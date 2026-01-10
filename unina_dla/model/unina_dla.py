@@ -45,7 +45,8 @@ class UNINA_DLA(nn.Module):
             # to offload the activation work from the CPU to the DLA hardware.
             # Head returns: (reg_outputs, cls_outputs)
             reg_outs, cls_outs = outputs
-            return reg_outs, [c.sigmoid() for c in cls_outs]
+            # FIX: Flatten into a single tuple of 6 tensors for ONNX export
+            return (*reg_outs, *[c.sigmoid() for c in cls_outs])
             
         return outputs
 

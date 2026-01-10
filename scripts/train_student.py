@@ -491,6 +491,11 @@ def main():
     dataset_cfg = IterableSimpleNamespace(**DEFAULT_CFG.__dict__)
     dataset_cfg.imgsz = 640
     
+    # CRITICAL: Overwrite defaults with YAML values (Augmentations)
+    for k, v in data_cfg.items():
+        if k in dataset_cfg.__dict__:
+            setattr(dataset_cfg, k, v)
+    
     train_set = build_yolo_dataset(dataset_cfg, data_cfg['train'], args.batch, data_cfg, mode='train', rect=False)
     train_loader = build_dataloader(train_set, batch=args.batch, workers=4, shuffle=True)
     val_set = build_yolo_dataset(dataset_cfg, data_cfg['val'], args.batch, data_cfg, mode='val', rect=False)
